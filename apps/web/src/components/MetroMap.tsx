@@ -83,6 +83,50 @@ const DEFAULT_THEME_MODE: ThemeMode = "dark"; // the tested, primary Guimard's I
 /** Must match the transform transition's duration below — the unmount timer waits for it. */
 const CURTAIN_DURATION_MS = 900;
 
+const TOUR_SEEN_KEY = "metropolitain_tour_seen";
+
+interface TourStepDef {
+  /** Which element to spotlight — null for the intro step, which has no single target. */
+  ref: "speed" | "themeLang" | "disruption" | null;
+  titleFr: string;
+  titleEn: string;
+  bodyFr: string;
+  bodyEn: string;
+}
+
+const TOUR_STEPS: TourStepDef[] = [
+  {
+    ref: null,
+    titleFr: "Bienvenue sur Métropolitain",
+    titleEn: "Welcome to Métropolitain",
+    bodyFr:
+      "Vous regardez les trains du métro, RER, Transilien et tramway d'Île-de-France se déplacer en temps réel, à partir de données réelles.",
+    bodyEn: "You're watching Paris's Métro, RER, Transilien, and tram trains move in real time, from real live data.",
+  },
+  {
+    ref: "speed",
+    titleFr: "Vitesse réelle par défaut",
+    titleEn: "Real speed by default",
+    bodyFr:
+      "×1 est la vitesse réelle des trains — souvent trop lente pour être visible à l'échelle de la ville. Accélérez pour mieux voir le mouvement.",
+    bodyEn: "×1 is real train speed — often too slow to notice at city scale. Speed up to see the movement more clearly.",
+  },
+  {
+    ref: "themeLang",
+    titleFr: "Thème et langue",
+    titleEn: "Theme and language",
+    bodyFr: "Passez du mode sombre au mode clair, ou basculez entre français et anglais, à tout moment.",
+    bodyEn: "Switch between dark and light mode, or between French and English, anytime.",
+  },
+  {
+    ref: "disruption",
+    titleFr: "Perturbations en direct",
+    titleEn: "Live disruptions",
+    bodyFr: "Cet indicateur affiche les perturbations de trafic en cours, ligne par ligne.",
+    bodyEn: "This shows current service disruptions, line by line.",
+  },
+];
+
 /**
  * Where a vehicle actually is *right now*, continuously — not just at the last poll.
  * Finds whichever two schedule points bracket the accelerated virtual time and interpolates
@@ -200,6 +244,15 @@ export default function MetroMap() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(DEFAULT_THEME_MODE);
   const [systemPrefersDark, setSystemPrefersDark] = useState(true);
 
+  // First-load tour: null = not showing (either not started yet, or finished/skipped).
+  // 0..TOUR_STEPS.length-1 = which step is active. Persisted in localStorage so it only
+  // ever shows once per visitor, not on every reload.
+  const [tourStep, setTourStep] = useState<number | null>(null);
+  const [tourRect, setTourRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  const speedControlRef = useRef<HTMLDivElement>(null);
+  const themeLangRef = useRef<HTMLDivElement>(null);
+  const disruptionBadgeRef = useRef<HTMLButtonElement>(null);
+
   const isDark = themeMode === "auto" ? systemPrefersDark : themeMode === "dark";
   const t = isDark ? themes.dark : themes.light;
   const panelBg = isDark ? "rgba(28,26,22,0.75)" : "rgba(232,226,212,0.85)";
@@ -217,6 +270,66 @@ export default function MetroMap() {
       clearTimeout(unmount);
     };
   }, [loading]);
+
+  // First-load tour: starts once the curtain has finished opening (never competes with it
+  // for attention), and only for a visitor who's never seen it — checked via localStorage,
+  // wrapped in try/catch since it can throw in private-browsing/blocked-storage contexts.
+  useEffect(() => {
+    if (loading || loadError) return;
+    let seen = false;
+    try {
+      seen = localStorage.getItem(TOUR_SEEN_KEY) === "1";
+    } catch {
+      // Storage blocked — just skip the tour rather than crash.
+    }
+    if (seen) return;
+    const start = setTimeout(() => setTourStep(0), CURTAIN_DURATION_MS + 300);
+    return () => clearTimeout(start);
+  }, [loading, loadError]);
+
+  // Re-measures the current step's target element whenever the step changes, and on
+  // resize while the tour is open — the target's actual position depends on the
+  // responsive layout (see the .mp-* media query above), not just React state.
+  useEffect(() => {
+    if (tourStep === null) {
+      setTourRect(null);
+      return;
+    }
+    const refKey = TOUR_STEPS[tourStep].ref;
+    function measure() {
+      let el: HTMLElement | null = null;
+      if (refKey === "speed") el = speedControlRef.current;
+      else if (refKey === "themeLang") el = themeLangRef.current;
+      else if (refKey === "disruption") el = disruptionBadgeRef.current;
+      if (!el) {
+        setTourRect(null);
+        return;
+      }
+      const r = el.getBoundingClientRect();
+      setTourRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+    }
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [tourStep]);
+
+  function endTour() {
+    setTourStep(null);
+    try {
+      localStorage.setItem(TOUR_SEEN_KEY, "1");
+    } catch {
+      // Storage blocked — the tour will just show again next visit, not worth failing over.
+    }
+  }
+
+  function advanceTour() {
+    if (tourStep === null) return;
+    if (tourStep >= TOUR_STEPS.length - 1) {
+      endTour();
+    } else {
+      setTourStep(tourStep + 1);
+    }
+  }
 
   // Re-anchors every tracked vehicle so a speed change never causes a visible jump: each
   // vehicle's current virtual position, evaluated under the *old* speed, becomes the new
@@ -557,11 +670,27 @@ export default function MetroMap() {
         </div>
       )}
 
+      {/* Desktop keeps all three top clusters in one row (wordmark left, speed control
+          centered, theme+language right) — plenty of room above ~640px. Below that they
+          reflow: language stays top-right (now its own row with the wordmark, since the
+          two are narrow enough to share), while speed and theme mode each get their own
+          centered row — their combined widths don't fit any narrower, which is what
+          caused the original mobile overlap. */}
+      <style>{`
+        .mp-wordmark { position: absolute; top: 16px; left: 16px; }
+        .mp-speed { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); }
+        .mp-theme-lang { position: absolute; top: 16px; right: 16px; }
+        @media (max-width: 640px) {
+          .mp-wordmark { top: 12px; left: 12px; }
+          .mp-lang { position: absolute; top: 12px; right: 12px; }
+          .mp-speed { top: 58px; left: 50%; right: auto; transform: translateX(-50%); }
+          .mp-theme-lang { top: 102px; left: 50%; right: auto; transform: translateX(-50%); }
+        }
+      `}</style>
+
       <div
+        className="mp-wordmark"
         style={{
-          position: "absolute",
-          top: 16,
-          left: 16,
           color: t.ink,
           fontFamily: "Georgia, serif",
           letterSpacing: "0.08em",
@@ -580,11 +709,9 @@ export default function MetroMap() {
       {/* Speed control: defaults to 1x (strictly real); any faster pace is the viewer's own
           explicit choice, always visible in the active button rather than assumed silently. */}
       <div
+        ref={speedControlRef}
+        className="mp-speed"
         style={{
-          position: "absolute",
-          top: 16,
-          left: "50%",
-          transform: "translateX(-50%)",
           display: "flex",
           alignItems: "center",
           gap: 6,
@@ -617,7 +744,7 @@ export default function MetroMap() {
         ))}
       </div>
 
-      <div style={{ position: "absolute", top: 16, right: 16, display: "flex", alignItems: "center", gap: 8 }}>
+      <div ref={themeLangRef} className="mp-theme-lang" style={{ display: "flex", alignItems: "center", gap: 8 }}>
         {/* Light/Dark/Auto — Dark is the tested, primary Guimard's Ironwork identity;
             Light translates the same verdigris/bronze materials to a daytime register
             rather than a generic invert. Auto follows the OS preference live. */}
@@ -659,26 +786,53 @@ export default function MetroMap() {
           ))}
         </div>
 
-        <button
-          onClick={() => setLang((l) => (l === "en" ? "fr" : "en"))}
-          style={{
-            background: panelBg,
-            color: t.ink,
-            border: `1px solid ${t.bronze}`,
-            borderRadius: 3,
-            padding: "4px 10px",
-            fontSize: 11,
-            letterSpacing: "0.1em",
-            cursor: "pointer",
-          }}
-        >
-          {lang.toUpperCase()}
-        </button>
+        <div className="mp-lang" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {/* Replay the first-load tour on demand — most useful right after switching
+              language, so a French-speaking then English-speaking (or vice versa) visitor
+              can see it in the language they actually want, not just once at first load. */}
+          <button
+            onClick={() => setTourStep(0)}
+            title={lang === "en" ? "Replay tour" : "Revoir la visite"}
+            aria-label={lang === "en" ? "Replay tour" : "Revoir la visite"}
+            style={{
+              background: panelBg,
+              color: t.ink,
+              border: `1px solid ${t.bronze}`,
+              borderRadius: "50%",
+              width: 24,
+              height: 24,
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            ?
+          </button>
+          <button
+            onClick={() => setLang((l) => (l === "en" ? "fr" : "en"))}
+            style={{
+              background: panelBg,
+              color: t.ink,
+              border: `1px solid ${t.bronze}`,
+              borderRadius: 3,
+              padding: "4px 10px",
+              fontSize: 11,
+              letterSpacing: "0.1em",
+              cursor: "pointer",
+            }}
+          >
+            {lang.toUpperCase()}
+          </button>
+        </div>
       </div>
 
       {/* Compact, always-visible disruption indicator — quiet when clear, a count when not.
           Never grows to cover the map; full detail lives in the panel it opens. */}
       <button
+        ref={disruptionBadgeRef}
         onClick={() => setDisruptionsOpen(true)}
         style={{
           position: "absolute",
@@ -772,6 +926,91 @@ export default function MetroMap() {
           </div>
         )}
       </div>
+
+      {/* First-load tour: a spotlight ring around the current step's real element (via
+          box-shadow filling the whole viewport except a cutout at its measured rect — no
+          clip-path/mask needed) plus a caption card. The intro step has no single target,
+          so it just dims the screen and centers the card instead. */}
+      {tourStep !== null &&
+        (() => {
+          const step = TOUR_STEPS[tourStep];
+          const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+          const placeBelow = !tourRect || tourRect.top + tourRect.height / 2 < vh / 2;
+          const cardStyle: React.CSSProperties = tourRect
+            ? {
+                position: "fixed",
+                left: "50%",
+                transform: "translateX(-50%)",
+                ...(placeBelow ? { top: tourRect.top + tourRect.height + 16 } : { top: Math.max(16, tourRect.top - 176) }),
+              }
+            : { position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)" };
+
+          return (
+            <div style={{ position: "fixed", inset: 0, zIndex: 50 }}>
+              {!tourRect && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)" }} />}
+              {tourRect && (
+                <div
+                  style={{
+                    position: "fixed",
+                    top: tourRect.top - 6,
+                    left: tourRect.left - 6,
+                    width: tourRect.width + 12,
+                    height: tourRect.height + 12,
+                    borderRadius: 6,
+                    border: `2px solid ${t.amberLamp}`,
+                    boxShadow: "0 0 0 9999px rgba(0,0,0,0.65)",
+                    pointerEvents: "none",
+                  }}
+                />
+              )}
+              <div
+                style={{
+                  ...cardStyle,
+                  width: "min(320px, calc(100vw - 32px))",
+                  background: panelBgSolid,
+                  border: `1px solid ${t.bronze}`,
+                  borderRadius: 4,
+                  padding: 16,
+                  color: t.ink,
+                  fontFamily: "system-ui, sans-serif",
+                }}
+              >
+                <div style={{ fontSize: 10, opacity: 0.6, letterSpacing: "0.1em", marginBottom: 6 }}>
+                  {tourStep + 1} / {TOUR_STEPS.length}
+                </div>
+                <div style={{ fontFamily: "Georgia, serif", fontSize: 15, marginBottom: 6 }}>
+                  {lang === "en" ? step.titleEn : step.titleFr}
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.5, marginBottom: 14 }}>
+                  {lang === "en" ? step.bodyEn : step.bodyFr}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <button
+                    onClick={endTour}
+                    style={{ background: "none", border: "none", color: t.ink, opacity: 0.6, fontSize: 11, cursor: "pointer" }}
+                  >
+                    {lang === "en" ? "Skip" : "Passer"}
+                  </button>
+                  <button
+                    onClick={advanceTour}
+                    style={{
+                      background: t.amberLamp,
+                      color: t.ground,
+                      border: "none",
+                      borderRadius: 2,
+                      padding: "6px 14px",
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {tourStep >= TOUR_STEPS.length - 1 ? (lang === "en" ? "Got it" : "Compris") : lang === "en" ? "Next" : "Suivant"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
     </div>
   );
 }
