@@ -676,15 +676,24 @@ export default function MetroMap() {
           two are narrow enough to share), while speed and theme mode each get their own
           centered row — their combined widths don't fit any narrower, which is what
           caused the original mobile overlap. */}
+      {/* .mp-theme and .mp-lang are siblings, each independently anchored to the root —
+          not one nested inside the other. An absolutely-positioned element's top/right
+          resolve against its *nearest positioned ancestor*, so nesting one inside another
+          absolutely-positioned box (the original bug here) measures its offset from that
+          box's corner instead of the viewport's, silently landing it in the wrong place
+          the moment the outer box's own size or position changes — exactly what happened
+          on narrow screens. Keeping every top-level cluster a flat sibling means each one's
+          top/right always means "from the screen edge," full stop, at every width. */}
       <style>{`
         .mp-wordmark { position: absolute; top: 16px; left: 16px; }
         .mp-speed { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); }
-        .mp-theme-lang { position: absolute; top: 16px; right: 16px; }
+        .mp-theme { position: absolute; top: 16px; right: 93px; }
+        .mp-lang { position: absolute; top: 16px; right: 16px; }
         @media (max-width: 640px) {
           .mp-wordmark { top: 12px; left: 12px; }
-          .mp-lang { position: absolute; top: 12px; right: 12px; }
+          .mp-lang { top: 12px; right: 12px; }
           .mp-speed { top: 58px; left: 50%; right: auto; transform: translateX(-50%); }
-          .mp-theme-lang { top: 102px; left: 50%; right: auto; transform: translateX(-50%); }
+          .mp-theme { top: 102px; left: 50%; right: auto; transform: translateX(-50%); }
         }
       `}</style>
 
@@ -744,89 +753,92 @@ export default function MetroMap() {
         ))}
       </div>
 
-      <div ref={themeLangRef} className="mp-theme-lang" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        {/* Light/Dark/Auto — Dark is the tested, primary Guimard's Ironwork identity;
-            Light translates the same verdigris/bronze materials to a daytime register
-            rather than a generic invert. Auto follows the OS preference live. */}
-        <div
+      {/* Light/Dark/Auto — Dark is the tested, primary Guimard's Ironwork identity;
+          Light translates the same verdigris/bronze materials to a daytime register
+          rather than a generic invert. Auto follows the OS preference live.
+          A sibling of .mp-lang, not a parent — see the note above the <style> block on
+          why nesting one absolutely-positioned cluster inside another breaks its offsets. */}
+      <div
+        ref={themeLangRef}
+        className="mp-theme"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          background: panelBg,
+          border: `1px solid ${t.bronze}`,
+          borderRadius: 3,
+          padding: "4px 6px",
+        }}
+      >
+        {(
+          [
+            ["dark", lang === "en" ? "DARK" : "SOMBRE"],
+            ["light", lang === "en" ? "LIGHT" : "CLAIR"],
+            ["auto", "AUTO"],
+          ] as [ThemeMode, string][]
+        ).map(([mode, label]) => (
+          <button
+            key={mode}
+            onClick={() => changeThemeMode(mode)}
+            style={{
+              background: themeMode === mode ? t.amberLamp : "transparent",
+              color: themeMode === mode ? t.ground : t.ink,
+              border: "none",
+              borderRadius: 2,
+              padding: "3px 7px",
+              fontSize: 10,
+              letterSpacing: "0.05em",
+              fontWeight: themeMode === mode ? 700 : 400,
+              cursor: "pointer",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="mp-lang" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        {/* Replay the first-load tour on demand — most useful right after switching
+            language, so a French-speaking then English-speaking (or vice versa) visitor
+            can see it in the language they actually want, not just once at first load. */}
+        <button
+          onClick={() => setTourStep(0)}
+          title={lang === "en" ? "Replay tour" : "Revoir la visite"}
+          aria-label={lang === "en" ? "Replay tour" : "Revoir la visite"}
           style={{
+            background: panelBg,
+            color: t.ink,
+            border: `1px solid ${t.bronze}`,
+            borderRadius: "50%",
+            width: 24,
+            height: 24,
+            fontSize: 11,
+            fontWeight: 700,
+            cursor: "pointer",
             display: "flex",
             alignItems: "center",
-            gap: 4,
-            background: panelBg,
-            border: `1px solid ${t.bronze}`,
-            borderRadius: 3,
-            padding: "4px 6px",
+            justifyContent: "center",
+            flexShrink: 0,
           }}
         >
-          {(
-            [
-              ["dark", lang === "en" ? "DARK" : "SOMBRE"],
-              ["light", lang === "en" ? "LIGHT" : "CLAIR"],
-              ["auto", "AUTO"],
-            ] as [ThemeMode, string][]
-          ).map(([mode, label]) => (
-            <button
-              key={mode}
-              onClick={() => changeThemeMode(mode)}
-              style={{
-                background: themeMode === mode ? t.amberLamp : "transparent",
-                color: themeMode === mode ? t.ground : t.ink,
-                border: "none",
-                borderRadius: 2,
-                padding: "3px 7px",
-                fontSize: 10,
-                letterSpacing: "0.05em",
-                fontWeight: themeMode === mode ? 700 : 400,
-                cursor: "pointer",
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        <div className="mp-lang" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {/* Replay the first-load tour on demand — most useful right after switching
-              language, so a French-speaking then English-speaking (or vice versa) visitor
-              can see it in the language they actually want, not just once at first load. */}
-          <button
-            onClick={() => setTourStep(0)}
-            title={lang === "en" ? "Replay tour" : "Revoir la visite"}
-            aria-label={lang === "en" ? "Replay tour" : "Revoir la visite"}
-            style={{
-              background: panelBg,
-              color: t.ink,
-              border: `1px solid ${t.bronze}`,
-              borderRadius: "50%",
-              width: 24,
-              height: 24,
-              fontSize: 11,
-              fontWeight: 700,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            ?
-          </button>
-          <button
-            onClick={() => setLang((l) => (l === "en" ? "fr" : "en"))}
-            style={{
-              background: panelBg,
-              color: t.ink,
-              border: `1px solid ${t.bronze}`,
-              borderRadius: 3,
-              padding: "4px 10px",
-              fontSize: 11,
-              letterSpacing: "0.1em",
-              cursor: "pointer",
-            }}
-          >
-            {lang.toUpperCase()}
-          </button>
-        </div>
+          ?
+        </button>
+        <button
+          onClick={() => setLang((l) => (l === "en" ? "fr" : "en"))}
+          style={{
+            background: panelBg,
+            color: t.ink,
+            border: `1px solid ${t.bronze}`,
+            borderRadius: 3,
+            padding: "4px 10px",
+            fontSize: 11,
+            letterSpacing: "0.1em",
+            cursor: "pointer",
+          }}
+        >
+          {lang.toUpperCase()}
+        </button>
       </div>
 
       {/* Compact, always-visible disruption indicator — quiet when clear, a count when not.
@@ -935,15 +947,64 @@ export default function MetroMap() {
         (() => {
           const step = TOUR_STEPS[tourStep];
           const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+          // Reserve room for the card itself when deciding — and clamping — where it
+          // goes, not just the target's own position, so it can never be pushed off a
+          // short viewport (the bug hit above: a naive "top: 50%" for the intro card
+          // overflowed off small screens instead of ever actually being re-clamped).
+          const CARD_H_ESTIMATE = 190;
           const placeBelow = !tourRect || tourRect.top + tourRect.height / 2 < vh / 2;
-          const cardStyle: React.CSSProperties = tourRect
-            ? {
-                position: "fixed",
-                left: "50%",
-                transform: "translateX(-50%)",
-                ...(placeBelow ? { top: tourRect.top + tourRect.height + 16 } : { top: Math.max(16, tourRect.top - 176) }),
-              }
-            : { position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)" };
+          const rawTop = tourRect ? (placeBelow ? tourRect.top + tourRect.height + 16 : tourRect.top - 16 - CARD_H_ESTIMATE) : null;
+          const clampedTop = rawTop === null ? null : Math.min(Math.max(rawTop, 16), Math.max(16, vh - CARD_H_ESTIMATE - 16));
+
+          const card = (
+            <div
+              style={{
+                width: "min(320px, calc(100vw - 32px))",
+                maxHeight: "calc(100vh - 32px)",
+                overflowY: "auto",
+                background: panelBgSolid,
+                border: `1px solid ${t.bronze}`,
+                borderRadius: 4,
+                padding: 16,
+                boxSizing: "border-box",
+                color: t.ink,
+                fontFamily: "system-ui, sans-serif",
+              }}
+            >
+              <div style={{ fontSize: 10, opacity: 0.6, letterSpacing: "0.1em", marginBottom: 6 }}>
+                {tourStep + 1} / {TOUR_STEPS.length}
+              </div>
+              <div style={{ fontFamily: "Georgia, serif", fontSize: 15, marginBottom: 6 }}>
+                {lang === "en" ? step.titleEn : step.titleFr}
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.5, marginBottom: 14 }}>
+                {lang === "en" ? step.bodyEn : step.bodyFr}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <button
+                  onClick={endTour}
+                  style={{ background: "none", border: "none", color: t.ink, opacity: 0.6, fontSize: 11, cursor: "pointer" }}
+                >
+                  {lang === "en" ? "Skip" : "Passer"}
+                </button>
+                <button
+                  onClick={advanceTour}
+                  style={{
+                    background: t.amberLamp,
+                    color: t.ground,
+                    border: "none",
+                    borderRadius: 2,
+                    padding: "6px 14px",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  {tourStep >= TOUR_STEPS.length - 1 ? (lang === "en" ? "Got it" : "Compris") : lang === "en" ? "Next" : "Suivant"}
+                </button>
+              </div>
+            </div>
+          );
 
           return (
             <div style={{ position: "fixed", inset: 0, zIndex: 50 }}>
@@ -963,51 +1024,31 @@ export default function MetroMap() {
                   }}
                 />
               )}
-              <div
-                style={{
-                  ...cardStyle,
-                  width: "min(320px, calc(100vw - 32px))",
-                  background: panelBgSolid,
-                  border: `1px solid ${t.bronze}`,
-                  borderRadius: 4,
-                  padding: 16,
-                  color: t.ink,
-                  fontFamily: "system-ui, sans-serif",
-                }}
-              >
-                <div style={{ fontSize: 10, opacity: 0.6, letterSpacing: "0.1em", marginBottom: 6 }}>
-                  {tourStep + 1} / {TOUR_STEPS.length}
+              {tourRect ? (
+                // Grounded in a real measured rect, not a viewport percentage — clamped
+                // above so it always stays fully on-screen regardless of viewport size.
+                <div style={{ position: "fixed", top: clampedTop as number, left: "50%", transform: "translateX(-50%)" }}>{card}</div>
+              ) : (
+                // No single target (the intro step) — flexbox-center it instead of the
+                // "top: 50%; transform: translate(-50%,-50%)" percentage trick, which is
+                // exactly what overflowed off short viewports: a flex parent centers its
+                // child using the box's actual rendered size, so it can never place the
+                // card partly outside the viewport the way a percentage-of-height
+                // calculation can when the content is taller than expected.
+                <div
+                  style={{
+                    position: "fixed",
+                    inset: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: 16,
+                    boxSizing: "border-box",
+                  }}
+                >
+                  {card}
                 </div>
-                <div style={{ fontFamily: "Georgia, serif", fontSize: 15, marginBottom: 6 }}>
-                  {lang === "en" ? step.titleEn : step.titleFr}
-                </div>
-                <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.5, marginBottom: 14 }}>
-                  {lang === "en" ? step.bodyEn : step.bodyFr}
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <button
-                    onClick={endTour}
-                    style={{ background: "none", border: "none", color: t.ink, opacity: 0.6, fontSize: 11, cursor: "pointer" }}
-                  >
-                    {lang === "en" ? "Skip" : "Passer"}
-                  </button>
-                  <button
-                    onClick={advanceTour}
-                    style={{
-                      background: t.amberLamp,
-                      color: t.ground,
-                      border: "none",
-                      borderRadius: 2,
-                      padding: "6px 14px",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      cursor: "pointer",
-                    }}
-                  >
-                    {tourStep >= TOUR_STEPS.length - 1 ? (lang === "en" ? "Got it" : "Compris") : lang === "en" ? "Next" : "Suivant"}
-                  </button>
-                </div>
-              </div>
+              )}
             </div>
           );
         })()}
