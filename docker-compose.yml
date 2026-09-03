@@ -1,0 +1,44 @@
+name: metropolitain
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./env/server.env
+    ports:
+      - "127.0.0.1:4001:4001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      # NEXT_PUBLIC_* is inlined into the client bundle at build time — real public
+      # HTTPS endpoints, since the browser talks to these directly, not through Docker
+      # networking (each service is independently reverse-proxied by nginx on the host).
+      args:
+        NEXT_PUBLIC_API_URL: https://api.metropolitain.live
+        NEXT_PUBLIC_WS_URL: wss://api.metropolitain.live/ws
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    logging: *logging
