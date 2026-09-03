@@ -1,0 +1,7 @@
+{
+  "name": "paris-transit-live",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ]
+}
