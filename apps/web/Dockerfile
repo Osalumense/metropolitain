@@ -21,6 +21,13 @@ RUN npm run build --workspace=apps/web
 FROM node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+# Next's standalone server.js binds to HOSTNAME if set, otherwise falls back to the
+# container's own bridge-network IP rather than all interfaces — meaning 127.0.0.1
+# genuinely has nothing listening from inside the container (confirmed: docker's own
+# healthcheck failing with "connection refused" while external access worked fine,
+# because Docker's port-mapping NATs straight to the bridge IP, sidestepping the gap).
+# 0.0.0.0 fixes both the healthcheck and is the correct binding for a containerized service.
+ENV HOSTNAME=0.0.0.0
 COPY --from=build /repo/apps/web/.next/standalone ./
 COPY --from=build /repo/apps/web/.next/static ./apps/web/.next/static
 EXPOSE 3000
