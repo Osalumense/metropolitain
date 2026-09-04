@@ -60,12 +60,31 @@ interface TrackedVehicle extends Vehicle {
   realAnchorTime: number;
 }
 
+type DisruptionSeverity = "blocking" | "reduced" | "info";
+
+interface DisruptionPeriod {
+  begin: number;
+  end: number;
+}
+
 interface Disruption {
   id: string;
   lineId: string;
+  severity: DisruptionSeverity;
+  shortTextFr: string;
+  shortTextEn: string;
   textFr: string;
   textEn: string;
+  periods: DisruptionPeriod[];
 }
+
+/** No known window (empty periods) is treated as always-active — matches the server's own
+ *  DisruptionState convention. */
+function isDisruptionActiveNow(d: Disruption, now: number): boolean {
+  return d.periods.length === 0 || d.periods.some((p) => now >= p.begin && now <= p.end);
+}
+
+const SEVERITY_RANK: Record<DisruptionSeverity, number> = { blocking: 2, reduced: 1, info: 0 };
 
 /**
  * Real train speed, watched live, is imperceptible — a ~2min gap between predicted stops
@@ -225,6 +244,10 @@ export default function MetroMap() {
   const mapRef = useRef<MapLibreMap | null>(null);
   const vehiclesRef = useRef<Map<string, TrackedVehicle>>(new Map());
   const lineGeometryRef = useRef<Map<string, Polyline>>(new Map());
+  /** lineId -> its own badge styling, read straight off the already-fetched network data
+   *  (every feature is stamped with its line's color/text_color/short_name server-side —
+   *  see network.ts) rather than keeping a second copy of the line registry client-side. */
+  const lineMetaRef = useRef<Map<string, { color: string; textColor: string; shortName: string }>>(new Map());
   const speedRef = useRef<number>(DEFAULT_SPEED);
   const [disruptions, setDisruptions] = useState<Disruption[]>([]);
   const [lang, setLang] = useState<"en" | "fr">("fr");
@@ -241,6 +264,8 @@ export default function MetroMap() {
   const [lastUpdate, setLastUpdate] = useState<number | null>(null);
   const [speed, setSpeed] = useState<number>(DEFAULT_SPEED);
   const [disruptionsOpen, setDisruptionsOpen] = useState(false);
+  const [upcomingOpen, setUpcomingOpen] = useState(false);
+  const [expandedDisruptionId, setExpandedDisruptionId] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(DEFAULT_THEME_MODE);
   const [systemPrefersDark, setSystemPrefersDark] = useState(true);
 
@@ -257,6 +282,43 @@ export default function MetroMap() {
   const t = isDark ? themes.dark : themes.light;
   const panelBg = isDark ? "rgba(28,26,22,0.75)" : "rgba(232,226,212,0.85)";
   const panelBgSolid = isDark ? "rgba(20,19,16,0.97)" : "rgba(232,226,212,0.97)";
+
+  // Disruptions: split into "active right now" (drives the badge) vs "scheduled/upcoming"
+  // (context, not urgency) — most of what IDFM reports at any moment is planned future
+  // works, not something happening this instant, so treating all of it as equally urgent
+  // was the actual problem with the old flat "160 perturbations" badge, not just its styling.
+  const disruptionsNow = Date.now();
+  const activeDisruptions = disruptions.filter((d) => isDisruptionActiveNow(d, disruptionsNow));
+  const upcomingDisruptions = disruptions.filter((d) => !isDisruptionActiveNow(d, disruptionsNow));
+  const activeLineIds = new Set(activeDisruptions.map((d) => d.lineId));
+  const worstActiveSeverity = activeDisruptions.reduce<DisruptionSeverity | null>(
+    (worst, d) => (worst === null || SEVERITY_RANK[d.severity] > SEVERITY_RANK[worst] ? d.severity : worst),
+    null
+  );
+  function groupDisruptionsByLine(list: Disruption[]): [string, Disruption[]][] {
+    const map = new Map<string, Disruption[]>();
+    for (const d of list) map.set(d.lineId, [...(map.get(d.lineId) ?? []), d]);
+    return [...map.entries()];
+  }
+  const activeByLine = groupDisruptionsByLine(activeDisruptions);
+  const upcomingByLine = groupDisruptionsByLine(upcomingDisruptions);
+  function severityColor(sev: DisruptionSeverity): string {
+    return sev === "blocking" ? t.disruption : sev === "reduced" ? t.amberLamp : t.ink;
+  }
+  /** Compact period label ("Today 10pm–11pm", "Sep 21–Oct 2") from the nearest upcoming
+   *  window — enough to place it in time without repeating the prose already in the text. */
+  function formatPeriod(d: Disruption): string | null {
+    const now = disruptionsNow;
+    const period = d.periods.find((p) => now <= p.end) ?? d.periods[0];
+    if (!period) return null;
+    const fmt = new Intl.DateTimeFormat(lang === "en" ? "en-GB" : "fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    const isToday = new Date(period.begin).toDateString() === new Date(now).toDateString();
+    if (isToday && period.begin <= now) {
+      const endFmt = new Intl.DateTimeFormat(lang === "en" ? "en-GB" : "fr-FR", { hour: "2-digit", minute: "2-digit" });
+      return `${lang === "en" ? "Until" : "Jusqu'à"} ${endFmt.format(period.end)}`;
+    }
+    return fmt.format(period.begin);
+  }
 
   // Drives the curtain reveal once loading clears: waits a frame (so the closed state
   // paints first and the transform transition is guaranteed to fire), starts the parting
@@ -418,9 +480,12 @@ export default function MetroMap() {
       // just "the" line's, to evaluate continuously every frame from its real schedule.
       for (const feature of network.features) {
         if (feature.geometry.type !== "LineString") continue;
-        const branchId = (feature.properties as { branchId?: string })?.branchId;
-        if (!branchId) continue;
-        lineGeometryRef.current.set(branchId, new Polyline(feature.geometry.coordinates as LngLat[]));
+        const props = feature.properties as { branchId?: string; id?: string; color?: string; text_color?: string; short_name?: string };
+        if (!props.branchId) continue;
+        lineGeometryRef.current.set(props.branchId, new Polyline(feature.geometry.coordinates as LngLat[]));
+        if (props.id && props.color && props.short_name && !lineMetaRef.current.has(props.id)) {
+          lineMetaRef.current.set(props.id, { color: props.color, textColor: props.text_color ?? "#000000", shortName: props.short_name });
+        }
       }
 
       // Each line renders in its own official RATP/IDFM color, not a uniform tone — with
@@ -841,11 +906,13 @@ export default function MetroMap() {
         </button>
       </div>
 
-      {/* Compact, always-visible disruption indicator — quiet when clear, a count when not.
-          Never grows to cover the map; full detail lives in the panel it opens. */}
+      {/* Compact, always-visible disruption indicator — quiet when clear, a line count
+          (not a raw notice count) when not. Never grows to cover the map; full detail
+          lives in the panel it opens. Click toggles open/closed, same as the map's other
+          buttons — it used to only ever open. */}
       <button
         ref={disruptionBadgeRef}
-        onClick={() => setDisruptionsOpen(true)}
+        onClick={() => setDisruptionsOpen((o) => !o)}
         style={{
           position: "absolute",
           bottom: 16,
@@ -855,7 +922,7 @@ export default function MetroMap() {
           gap: 6,
           background: panelBg,
           color: t.ink,
-          border: `1px solid ${disruptions.length > 0 ? t.disruption : t.bronze}`,
+          border: `1px solid ${activeLineIds.size > 0 ? severityColor(worstActiveSeverity ?? "info") : t.bronze}`,
           borderRadius: 3,
           padding: "6px 10px",
           fontSize: 12,
@@ -863,24 +930,24 @@ export default function MetroMap() {
           cursor: "pointer",
         }}
       >
-        {disruptions.length > 0 && (
+        {activeLineIds.size > 0 && (
           <span
             style={{
               width: 8,
               height: 8,
               borderRadius: "50%",
-              background: t.disruption,
+              background: severityColor(worstActiveSeverity ?? "info"),
               display: "inline-block",
             }}
           />
         )}
-        {disruptions.length === 0
+        {activeLineIds.size === 0
           ? lang === "en"
             ? "All clear"
             : "Trafic normal"
           : lang === "en"
-            ? `${disruptions.length} disruption${disruptions.length > 1 ? "s" : ""}`
-            : `${disruptions.length} perturbation${disruptions.length > 1 ? "s" : ""}`}
+            ? `${activeLineIds.size} line${activeLineIds.size > 1 ? "s" : ""} disrupted`
+            : `${activeLineIds.size} ligne${activeLineIds.size > 1 ? "s" : ""} perturbée${activeLineIds.size > 1 ? "s" : ""}`}
       </button>
 
       {/* Slide-in panel: map stays visible and interactive behind it, unlike a full modal. */}
@@ -907,33 +974,157 @@ export default function MetroMap() {
           <span style={{ letterSpacing: "0.1em", fontSize: 11, opacity: 0.7 }}>
             {lang === "en" ? "DISRUPTIONS" : "PERTURBATIONS"}
           </span>
+          {/* Explicit 32x32 hit area around the small × glyph — the old version was just
+              the bare character with no padding, well under any real touch-target size. */}
           <button
             onClick={() => setDisruptionsOpen(false)}
-            style={{ background: "none", border: "none", color: t.ink, fontSize: 16, cursor: "pointer", lineHeight: 1 }}
+            style={{
+              background: "none",
+              border: "none",
+              color: t.ink,
+              fontSize: 18,
+              cursor: "pointer",
+              lineHeight: 1,
+              width: 32,
+              height: 32,
+              marginRight: -6,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
             aria-label={lang === "en" ? "Close" : "Fermer"}
           >
             ×
           </button>
         </div>
-        {disruptions.length === 0 ? (
+
+        {activeByLine.length === 0 ? (
           <div style={{ opacity: 0.5 }}>{lang === "en" ? "All clear" : "Trafic normal"}</div>
         ) : (
-          disruptions.map((d) => (
+          activeByLine.map(([lineId, items]) => {
+            const meta = lineMetaRef.current.get(lineId);
+            return (
+              <div key={lineId} style={{ marginBottom: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                  <span
+                    style={{
+                      width: 20,
+                      height: 20,
+                      borderRadius: "50%",
+                      background: meta?.color ?? t.bronze,
+                      color: meta?.textColor ?? "#ffffff",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {meta?.shortName ?? lineId}
+                  </span>
+                </div>
+                {items.map((d) => {
+                  const expanded = expandedDisruptionId === d.id;
+                  const period = formatPeriod(d);
+                  return (
+                    <div
+                      key={d.id}
+                      onClick={() => setExpandedDisruptionId(expanded ? null : d.id)}
+                      style={{
+                        borderLeft: `2px solid ${severityColor(d.severity)}`,
+                        padding: "4px 8px",
+                        marginBottom: 4,
+                        marginLeft: 26,
+                        cursor: "pointer",
+                      }}
+                    >
+                      <div>{lang === "en" ? d.shortTextEn : d.shortTextFr}</div>
+                      {period && <div style={{ fontSize: 10, opacity: 0.5, marginTop: 2 }}>{period}</div>}
+                      {expanded && (
+                        <div style={{ fontSize: 11, opacity: 0.8, marginTop: 6, lineHeight: 1.4 }}>
+                          {lang === "en" ? d.textEn : d.textFr}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })
+        )}
+
+        {upcomingByLine.length > 0 && (
+          <div style={{ marginTop: 16, borderTop: `1px solid ${t.bronze}`, paddingTop: 12 }}>
             <div
-              key={d.id}
+              onClick={() => setUpcomingOpen((o) => !o)}
               style={{
-                background: isDark ? "rgba(194,59,45,0.15)" : "rgba(168,50,38,0.12)",
-                borderLeft: `2px solid ${t.disruption}`,
-                padding: "6px 10px",
-                marginBottom: 8,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                cursor: "pointer",
+                opacity: 0.7,
+                fontSize: 11,
+                letterSpacing: "0.05em",
               }}
             >
-              {lang === "en" ? d.textEn : d.textFr}
+              <span>{lang === "en" ? `UPCOMING (${upcomingDisruptions.length})` : `À VENIR (${upcomingDisruptions.length})`}</span>
+              <span>{upcomingOpen ? "▾" : "▸"}</span>
             </div>
-          ))
+            {upcomingOpen && (
+              <div style={{ marginTop: 8 }}>
+                {upcomingByLine.map(([lineId, items]) => {
+                  const meta = lineMetaRef.current.get(lineId);
+                  return (
+                    <div key={lineId} style={{ marginBottom: 10, opacity: 0.7 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                        <span
+                          style={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: "50%",
+                            background: meta?.color ?? t.bronze,
+                            color: meta?.textColor ?? "#ffffff",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: 9,
+                            fontWeight: 700,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {meta?.shortName ?? lineId}
+                        </span>
+                      </div>
+                      {items.map((d) => {
+                        const expanded = expandedDisruptionId === d.id;
+                        const period = formatPeriod(d);
+                        return (
+                          <div
+                            key={d.id}
+                            onClick={() => setExpandedDisruptionId(expanded ? null : d.id)}
+                            style={{ padding: "3px 8px", marginBottom: 3, marginLeft: 24, cursor: "pointer", fontSize: 11 }}
+                          >
+                            <div>{lang === "en" ? d.shortTextEn : d.shortTextFr}</div>
+                            {period && <div style={{ fontSize: 10, opacity: 0.6, marginTop: 2 }}>{period}</div>}
+                            {expanded && (
+                              <div style={{ fontSize: 11, opacity: 0.9, marginTop: 6, lineHeight: 1.4 }}>
+                                {lang === "en" ? d.textEn : d.textFr}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         )}
+
         {lastUpdate && (
-          <div style={{ opacity: 0.4, fontSize: 10, marginTop: 8 }}>
+          <div style={{ opacity: 0.4, fontSize: 10, marginTop: 12 }}>
             {lang === "en" ? "Updated" : "Mis à jour"} {new Date(lastUpdate).toLocaleTimeString()}
           </div>
         )}

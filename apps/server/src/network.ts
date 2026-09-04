@@ -70,6 +70,7 @@ function loadLine(id: string, index: number): LineDefinition {
     feature.properties = {
       ...feature.properties,
       color: info.color,
+      text_color: info.textColor,
       short_name: info.shortName,
       isLive: LIVE_LINE_IDS.has(id),
       offset,

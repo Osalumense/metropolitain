@@ -1,6 +1,6 @@
 import { LIVE_LINES, LINE_BY_REF, quayLocation, type LineDefinition } from "./network.js";
 import { translateToEnglish } from "./translate.js";
-import type { VehicleState, DisruptionState, SchedulePoint } from "./mockIngestion.js";
+import type { VehicleState, DisruptionState, DisruptionSeverity, SchedulePoint } from "./mockIngestion.js";
 
 const BASE_URL = "https://prim.iledefrance-mobilites.fr/marketplace";
 
@@ -219,6 +219,8 @@ interface BulkDisruption {
   title?: string;
   message?: string;
   shortMessage?: string;
+  severity?: string;
+  applicationPeriods?: { begin?: string; end?: string }[];
   impactedSections?: { lineId?: string }[];
 }
 
@@ -233,6 +235,51 @@ function stripHtml(html: string): string {
     )
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** IDFM's own three values (BLOQUANTE/PERTURBEE/INFORMATION), confirmed against the real
+ *  feed — anything unrecognized falls back to "info" rather than overstating severity. */
+function normalizeSeverity(raw: string | undefined): DisruptionSeverity {
+  if (raw === "BLOQUANTE") return "blocking";
+  if (raw === "PERTURBEE") return "reduced";
+  return "info";
+}
+
+/**
+ * "20260924T044500" is Europe/Paris wall-clock time (confirmed against real departure
+ * times in the feed's own message text), not UTC and not ISO-8601 — parsed by first
+ * reading the digits as if they were UTC, then correcting by however far Paris's *actual*
+ * offset (which shifts with DST — CET vs CEST) puts it, rather than assuming a fixed
+ * offset that would silently be wrong for half the year.
+ */
+function parseParisDateTime(s: string): number | null {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/.exec(s);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, se] = m.map(Number);
+  const guessAsUtc = Date.UTC(y, mo - 1, d, h, mi, se);
+  const parisParts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "Europe/Paris",
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    })
+      .formatToParts(new Date(guessAsUtc))
+      .map((p) => [p.type, p.value])
+  );
+  const parisReadingAsUtc = Date.UTC(
+    Number(parisParts.year),
+    Number(parisParts.month) - 1,
+    Number(parisParts.day),
+    Number(parisParts.hour),
+    Number(parisParts.minute),
+    Number(parisParts.second)
+  );
+  return guessAsUtc - (parisReadingAsUtc - guessAsUtc);
 }
 
 export async function fetchDisruptions(): Promise<DisruptionState[]> {
@@ -263,12 +310,31 @@ export async function fetchDisruptions(): Promise<DisruptionState[]> {
     const textFr = stripHtml(item.message ?? item.title ?? item.shortMessage ?? "");
     if (!textFr) continue;
     const textEn = await translateToEnglish(textFr);
+    // shortMessage is already concise ("Stop not served") — only fall back to stripping
+    // the full message if it's somehow missing, never re-derive from the (line-name-
+    // prefixed) title, since that would repeat the line name the UI already shows as the
+    // group header.
+    const shortTextFr = item.shortMessage ? stripHtml(item.shortMessage) : textFr;
+    const shortTextEn = item.shortMessage ? await translateToEnglish(shortTextFr) : textEn;
+    const severity: DisruptionSeverity = normalizeSeverity(item.severity);
+    const periods = (item.applicationPeriods ?? [])
+      .map((p) => ({ begin: p.begin ? parseParisDateTime(p.begin) : null, end: p.end ? parseParisDateTime(p.end) : null }))
+      .filter((p): p is { begin: number; end: number } => p.begin !== null && p.end !== null);
 
     for (const rawLineId of lineIds) {
       const code = rawLineId.replace(/^line:IDFM:/, "");
       const line = LINE_BY_BARE_CODE.get(code);
       if (!line) continue; // a line we don't track (bus, etc.)
-      disruptions.push({ id: `${item.id}-${line.id}`, lineId: line.id, textFr, textEn });
+      disruptions.push({
+        id: `${item.id}-${line.id}`,
+        lineId: line.id,
+        severity,
+        shortTextFr,
+        shortTextEn,
+        textFr,
+        textEn,
+        periods,
+      });
     }
   }
   return disruptions;
