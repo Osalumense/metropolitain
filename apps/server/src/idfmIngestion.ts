@@ -11,7 +11,14 @@ const BASE_URL = "https://prim.iledefrance-mobilites.fr/marketplace";
  * disruptions are tracked separately since they're different quota buckets.
  */
 const MAX_POSITION_CALLS_PER_DAY = 1400;
-const MAX_DISRUPTION_CALLS_PER_DAY = 1400; // 7 lines x this many cycles/day
+// One call/cycle now (see fetchDisruptions — the bulk endpoint, not one call per line), so
+// this is real headroom under IDFM's own 1,000/day quota for this endpoint, not just a
+// number that happens not to trip. The previous "1400, 7 lines x this many cycles/day" cap
+// was sized for a 7-line, one-call-per-line design; by the time we tracked 44 lines it was
+// exhausting itself in the first ~62 minutes of every day (1400 / 44 lines ≈ 31 cycles),
+// silently skipping disruption fetching for the rest of the day, every day — the real
+// reason disruptions were never showing, confirmed directly against IDFM's real feed.
+const MAX_DISRUPTION_CALLS_PER_DAY = 700;
 
 class DailyBudget {
   private count = 0;
@@ -195,45 +202,73 @@ export async function fetchVehicles(): Promise<VehicleState[]> {
   return vehicles;
 }
 
-interface InfoMessage {
-  Content?: { Message?: { MessageType?: string; MessageText?: { value?: string; lang?: string } }[] };
+const DISRUPTIONS_BULK_URL = "https://prim.iledefrance-mobilites.fr/marketplace/disruptions_bulk/disruptions/v2";
+
+/**
+ * "line:IDFM:C01728" -> "C01728" -> our LineDefinition, by matching against the same bare
+ * code embedded in lineRef ("STIF:Line::C01728:"). Built once from LIVE_LINES: this bulk
+ * feed covers the whole network (buses included, ~900 disruptions at once), so most entries
+ * won't match anything in here — that's expected, not a bug, since we only track rail/tram.
+ */
+const LINE_BY_BARE_CODE: Map<string, LineDefinition> = new Map(
+  LIVE_LINES.map((l) => [l.lineRef.replace(/^STIF:Line::/, "").replace(/:$/, ""), l])
+);
+
+interface BulkDisruption {
+  id: string;
+  title?: string;
+  message?: string;
+  shortMessage?: string;
+  impactedSections?: { lineId?: string }[];
 }
 
-/** Prefers the concise SHORT_MESSAGE variant (ticker-appropriate) over TEXT_ONLY. */
-function extractMessageText(msg: InfoMessage): string | null {
-  const messages = msg.Content?.Message ?? [];
-  const short = messages.find((m) => m.MessageType === "SHORT_MESSAGE");
-  const text = short?.MessageText?.value ?? messages[0]?.MessageText?.value;
-  return text ?? null;
+const HTML_ENTITY_MAP: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+
+/** The feed's `message` is HTML ("<p>…</p><br>…") — strip tags/entities for plain display text. */
+function stripHtml(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&(#(\d+)|[a-z]+);/gi, (_, _whole, dec) =>
+      dec ? String.fromCharCode(Number(dec)) : (HTML_ENTITY_MAP[_whole.toLowerCase()] ?? _whole)
+    )
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export async function fetchDisruptions(): Promise<DisruptionState[]> {
-  if (!disruptionBudget.tryConsume(MAX_DISRUPTION_CALLS_PER_DAY, LIVE_LINES.length)) {
+  if (!disruptionBudget.tryConsume(MAX_DISRUPTION_CALLS_PER_DAY)) {
     console.warn("[idfm] daily disruption call budget exhausted, skipping this cycle");
     return [];
   }
 
+  // Explicit, not left to whatever Node's fetch defaults to — confirmed the hard way: with
+  // no Accept-Language header, curl (sends none at all) got French back, but Node's own
+  // fetch got English (it apparently sends its own default based on the runtime/OS locale).
+  // textFr must always genuinely be French, since translateToEnglish assumes a French
+  // source — this pins it rather than trusting an ambient default that clearly isn't
+  // consistent across HTTP clients.
+  const res = await fetch(DISRUPTIONS_BULK_URL, { headers: { apiKey: apiKey(), "Accept-Language": "fr-FR" } });
+  if (!res.ok) throw new Error(`disruptions_bulk ${res.status}`);
+  const json = await res.json();
+  const items: BulkDisruption[] = json?.disruptions ?? [];
+
   const disruptions: DisruptionState[] = [];
-  for (const line of LIVE_LINES) {
-    try {
-      const res = await fetch(`${BASE_URL}/general-message?LineRef=${encodeURIComponent(line.lineRef)}`, {
-        headers: { apikey: apiKey() },
-      });
-      if (!res.ok) continue;
-      const json = await res.json();
-      const messages: InfoMessage[] = json?.Siri?.ServiceDelivery?.GeneralMessageDelivery?.[0]?.InfoMessage ?? [];
-      for (const m of messages) {
-        const textFr = extractMessageText(m);
-        if (!textFr) continue;
-        disruptions.push({
-          id: `${line.id}-${textFr.slice(0, 40)}`,
-          lineId: line.id,
-          textFr,
-          textEn: await translateToEnglish(textFr),
-        });
-      }
-    } catch (err) {
-      console.error(`[idfm] general-message failed for ${line.id}:`, err);
+  for (const item of items) {
+    const sections = item.impactedSections ?? [];
+    // A single disruption can list the same line several times (one per affected direction
+    // /segment) — dedupe before turning it into per-line entries.
+    const lineIds = new Set(sections.map((s) => s.lineId).filter((x): x is string => !!x));
+    if (lineIds.size === 0) continue; // no attributable line (e.g. bus-only, or network-wide)
+
+    const textFr = stripHtml(item.message ?? item.title ?? item.shortMessage ?? "");
+    if (!textFr) continue;
+    const textEn = await translateToEnglish(textFr);
+
+    for (const rawLineId of lineIds) {
+      const code = rawLineId.replace(/^line:IDFM:/, "");
+      const line = LINE_BY_BARE_CODE.get(code);
+      if (!line) continue; // a line we don't track (bus, etc.)
+      disruptions.push({ id: `${item.id}-${line.id}`, lineId: line.id, textFr, textEn });
     }
   }
   return disruptions;
