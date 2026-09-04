@@ -749,11 +749,18 @@ export default function MetroMap() {
           the moment the outer box's own size or position changes — exactly what happened
           on narrow screens. Keeping every top-level cluster a flat sibling means each one's
           top/right always means "from the screen edge," full stop, at every width. */}
+      {/* z-index: 5 on every chrome element below — MapLibre's own attribution control
+          ships with z-index: 2 in its default CSS, so any of our UI that overlaps it
+          without an explicit z-index (the previous "auto") loses regardless of DOM order,
+          since z-index beats paint order once either side sets one. Confirmed the hard
+          way, with elementFromPoint at the disruption badge's own coordinates returning
+          the attribution control's DOM node, not the badge, despite the badge existing,
+          visible, opacity 1, at that exact point. */}
       <style>{`
-        .mp-wordmark { position: absolute; top: 16px; left: 16px; }
-        .mp-speed { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); }
-        .mp-theme { position: absolute; top: 16px; right: 93px; }
-        .mp-lang { position: absolute; top: 16px; right: 16px; }
+        .mp-wordmark { position: absolute; top: 16px; left: 16px; z-index: 5; }
+        .mp-speed { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 5; }
+        .mp-theme { position: absolute; top: 16px; right: 93px; z-index: 5; }
+        .mp-lang { position: absolute; top: 16px; right: 16px; z-index: 5; }
         @media (max-width: 640px) {
           .mp-wordmark { top: 12px; left: 12px; }
           .mp-lang { top: 12px; right: 12px; }
@@ -917,6 +924,7 @@ export default function MetroMap() {
           position: "absolute",
           bottom: 16,
           left: 16,
+          zIndex: 5,
           display: "flex",
           alignItems: "center",
           gap: 6,
@@ -957,6 +965,7 @@ export default function MetroMap() {
           top: 0,
           right: 0,
           bottom: 0,
+          zIndex: 5,
           width: 340,
           maxWidth: "85vw",
           background: panelBgSolid,
