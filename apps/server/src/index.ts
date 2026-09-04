@@ -8,7 +8,13 @@ import { MockIngestion, type VehicleState, type DisruptionState } from "./mockIn
 import { fetchVehicles, fetchDisruptions } from "./idfmIngestion.js";
 
 const PORT = Number(process.env.PORT ?? 4000);
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? "http://localhost:3000";
+// Comma-separated so both the apex and www can be allowed — nginx serves the same app on
+// both hosts with no redirect between them, so a visitor landing on www (bookmark, browser
+// autofill, a shared link) was getting every API call silently blocked by the browser's own
+// CORS enforcement when this only listed the apex: the server's 204 response looked fine in
+// curl, but Access-Control-Allow-Origin didn't match the page's actual origin, so the browser
+// discarded it — a real, deterministic bug, not a fluke tied to any one visitor's setup.
+const FRONTEND_ORIGINS = (process.env.FRONTEND_ORIGIN ?? "http://localhost:3000").split(",").map((o) => o.trim());
 const USE_REAL_DATA = Boolean(process.env.PRIM_API_KEY);
 
 // Mock loop isn't subject to any quota, so it can tick fast for visible motion in dev.
@@ -19,7 +25,7 @@ const POSITION_INTERVAL_MS = Number(process.env.POSITION_INTERVAL_MS ?? (USE_REA
 const DISRUPTION_INTERVAL_MS = Number(process.env.DISRUPTION_INTERVAL_MS ?? (USE_REAL_DATA ? 120_000 : 4_000));
 
 const app = express();
-app.use(cors({ origin: FRONTEND_ORIGIN }));
+app.use(cors({ origin: FRONTEND_ORIGINS }));
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", realData: USE_REAL_DATA });
@@ -84,7 +90,7 @@ disruptionLoop();
 
 httpServer.listen(PORT, () => {
   console.log(`[server] listening on http://localhost:${PORT}`);
-  console.log(`[server] CORS locked to ${FRONTEND_ORIGIN}`);
+  console.log(`[server] CORS locked to ${FRONTEND_ORIGINS.join(", ")}`);
   if (USE_REAL_DATA) {
     console.log(`[server] LIVE IDFM data — positions every ${POSITION_INTERVAL_MS}ms, disruptions every ${DISRUPTION_INTERVAL_MS}ms`);
   } else {
