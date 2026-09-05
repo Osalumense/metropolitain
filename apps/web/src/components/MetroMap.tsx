@@ -5,9 +5,10 @@ import maplibregl, { type Map as MapLibreMap } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { themes, type ThemePalette } from "@/lib/theme";
 import { Polyline, type LngLat } from "@/lib/polyline";
+import { config } from "@/config";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4001";
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:4001/ws";
+const API_URL = config.apiUrl;
+const WS_URL = config.wsUrl;
 
 /**
  * Our own backend, unlike the third-party base-map tiles, is infrastructure we control end

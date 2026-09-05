@@ -105,8 +105,8 @@ export const LIVE_LINES: LineDefinition[] = ALL_LINES.filter((l) => LIVE_LINE_ID
 
 /**
  * Built once, here, rather than by each caller on every poll cycle — LIVE_LINES never
- * changes after startup, so re-deriving a lookup index from it per call (as both
- * mockIngestion.ts and idfmIngestion.ts used to) is pure repeated work for a static result.
+ * changes after startup, so re-deriving a lookup index from it per call (as idfmIngestion.ts
+ * used to) is pure repeated work for a static result.
  */
 export const LINE_BY_ID: Map<string, LineDefinition> = new Map(LIVE_LINES.map((l) => [l.id, l]));
 export const LINE_BY_REF: Map<string, LineDefinition> = new Map(LIVE_LINES.map((l) => [l.lineRef, l]));

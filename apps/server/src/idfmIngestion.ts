@@ -1,6 +1,7 @@
+import { config } from "./config/index.js";
 import { LIVE_LINES, LINE_BY_REF, quayLocation, type LineDefinition } from "./network.js";
 import { translateToEnglish } from "./translate.js";
-import type { VehicleState, DisruptionState, DisruptionSeverity, SchedulePoint } from "./mockIngestion.js";
+import type { VehicleState, DisruptionState, DisruptionSeverity, SchedulePoint } from "./types/index.js";
 
 const BASE_URL = "https://prim.iledefrance-mobilites.fr/marketplace";
 
@@ -42,12 +43,6 @@ class DailyBudget {
 
 const positionBudget = new DailyBudget();
 const disruptionBudget = new DailyBudget();
-
-function apiKey(): string {
-  const key = process.env.PRIM_API_KEY;
-  if (!key) throw new Error("PRIM_API_KEY not set");
-  return key;
-}
 
 /** "STIF:StopPointRef:Q:24859:" (or similar) -> "24859" */
 function extractQuayCode(stopPointRef: string): string | null {
@@ -155,7 +150,7 @@ export async function fetchVehicles(): Promise<VehicleState[]> {
     return [];
   }
 
-  const res = await fetch(`${BASE_URL}/estimated-timetable`, { headers: { apikey: apiKey() } });
+  const res = await fetch(`${BASE_URL}/estimated-timetable`, { headers: { apikey: config.primApiKey } });
   if (!res.ok) throw new Error(`estimated-timetable ${res.status}`);
   const json = await res.json();
 
@@ -294,7 +289,7 @@ export async function fetchDisruptions(): Promise<DisruptionState[]> {
   // textFr must always genuinely be French, since translateToEnglish assumes a French
   // source — this pins it rather than trusting an ambient default that clearly isn't
   // consistent across HTTP clients.
-  const res = await fetch(DISRUPTIONS_BULK_URL, { headers: { apiKey: apiKey(), "Accept-Language": "fr-FR" } });
+  const res = await fetch(DISRUPTIONS_BULK_URL, { headers: { apiKey: config.primApiKey, "Accept-Language": "fr-FR" } });
   if (!res.ok) throw new Error(`disruptions_bulk ${res.status}`);
   const json = await res.json();
   const items: BulkDisruption[] = json?.disruptions ?? [];

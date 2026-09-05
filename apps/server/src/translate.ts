@@ -1,3 +1,5 @@
+import { config } from "./config/index.js";
+
 const cache = new Map<string, string>();
 
 /**
@@ -13,7 +15,7 @@ export async function translateToEnglish(frenchText: string): Promise<string> {
   const cached = cache.get(frenchText);
   if (cached) return cached;
 
-  const apiKey = process.env.DEEPL_API_KEY;
+  const apiKey = config.deeplApiKey;
   if (!apiKey) {
     cache.set(frenchText, frenchText);
     return frenchText;

@@ -1,34 +1,24 @@
-import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
+import { config } from "./config/index.js";
 import { networkGeoJSON } from "./network.js";
-import { MockIngestion, type VehicleState, type DisruptionState } from "./mockIngestion.js";
+import type { VehicleState, DisruptionState } from "./types/index.js";
 import { fetchVehicles, fetchDisruptions } from "./idfmIngestion.js";
 
-const PORT = Number(process.env.PORT ?? 4000);
+const app = express();
+app.disable("x-powered-by"); // don't hand attackers free framework fingerprinting
 // Comma-separated so both the apex and www can be allowed — nginx serves the same app on
 // both hosts with no redirect between them, so a visitor landing on www (bookmark, browser
 // autofill, a shared link) was getting every API call silently blocked by the browser's own
 // CORS enforcement when this only listed the apex: the server's 204 response looked fine in
 // curl, but Access-Control-Allow-Origin didn't match the page's actual origin, so the browser
 // discarded it — a real, deterministic bug, not a fluke tied to any one visitor's setup.
-const FRONTEND_ORIGINS = (process.env.FRONTEND_ORIGIN ?? "http://localhost:3000").split(",").map((o) => o.trim());
-const USE_REAL_DATA = Boolean(process.env.PRIM_API_KEY);
-
-// Mock loop isn't subject to any quota, so it can tick fast for visible motion in dev.
-// Real IDFM polling follows the cadence from PRODUCT.md: positions ~90s (the feed itself
-// only refreshes once/minute, so faster gains nothing), disruptions ~2min (7 calls/cycle,
-// one per tracked line — see idfmIngestion.ts for why a single global call isn't possible).
-const POSITION_INTERVAL_MS = Number(process.env.POSITION_INTERVAL_MS ?? (USE_REAL_DATA ? 90_000 : 4_000));
-const DISRUPTION_INTERVAL_MS = Number(process.env.DISRUPTION_INTERVAL_MS ?? (USE_REAL_DATA ? 120_000 : 4_000));
-
-const app = express();
-app.use(cors({ origin: FRONTEND_ORIGINS }));
+app.use(cors({ origin: config.frontendOrigins }));
 
 app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", realData: USE_REAL_DATA });
+  res.json({ status: "ok" });
 });
 
 app.get("/api/network", (_req, res) => {
@@ -45,7 +35,7 @@ const wss = new WebSocketServer({
   // with a deliberately forged Origin isn't stopped by this any more than curl bypasses
   // CORS today; that's not what this is for. Requests with no Origin at all (non-browser
   // tools — our own diagnostics included) are left alone rather than blocked.
-  verifyClient: (info: { origin: string }) => !info.origin || FRONTEND_ORIGINS.includes(info.origin),
+  verifyClient: (info: { origin: string }) => !info.origin || config.frontendOrigins.includes(info.origin),
 });
 
 let latestVehicles: VehicleState[] = [];
@@ -65,26 +55,16 @@ wss.on("connection", (socket) => {
   socket.on("close", () => console.log(`[ws] client disconnected (${wss.clients.size} total)`));
 });
 
-const mock = USE_REAL_DATA ? null : new MockIngestion();
-
 async function positionLoop() {
   try {
-    if (USE_REAL_DATA) {
-      latestVehicles = await fetchVehicles();
-    } else {
-      const tick = await mock!.tick();
-      latestVehicles = tick.vehicles;
-      latestDisruptions = tick.disruptions; // mock bundles both in one tick
-    }
+    latestVehicles = await fetchVehicles();
     broadcast({ type: "positions", data: latestVehicles });
-    if (!USE_REAL_DATA) broadcast({ type: "disruptions", data: latestDisruptions });
   } catch (err) {
     console.error("[positionLoop] failed:", err);
   }
 }
 
 async function disruptionLoop() {
-  if (!USE_REAL_DATA) return; // mock handles disruptions inside positionLoop
   try {
     latestDisruptions = await fetchDisruptions();
     broadcast({ type: "disruptions", data: latestDisruptions });
@@ -93,17 +73,13 @@ async function disruptionLoop() {
   }
 }
 
-setInterval(positionLoop, POSITION_INTERVAL_MS);
-setInterval(disruptionLoop, DISRUPTION_INTERVAL_MS);
+setInterval(positionLoop, config.positionIntervalMs);
+setInterval(disruptionLoop, config.disruptionIntervalMs);
 positionLoop();
 disruptionLoop();
 
-httpServer.listen(PORT, () => {
-  console.log(`[server] listening on http://localhost:${PORT}`);
-  console.log(`[server] CORS locked to ${FRONTEND_ORIGINS.join(", ")}`);
-  if (USE_REAL_DATA) {
-    console.log(`[server] LIVE IDFM data — positions every ${POSITION_INTERVAL_MS}ms, disruptions every ${DISRUPTION_INTERVAL_MS}ms`);
-  } else {
-    console.log(`[server] mock ingestion tick every ${POSITION_INTERVAL_MS}ms — NOT real IDFM data`);
-  }
+httpServer.listen(config.port, () => {
+  console.log(`[server] listening on http://localhost:${config.port}`);
+  console.log(`[server] CORS locked to ${config.frontendOrigins.join(", ")}`);
+  console.log(`[server] LIVE IDFM data — positions every ${config.positionIntervalMs}ms, disruptions every ${config.disruptionIntervalMs}ms`);
 });
