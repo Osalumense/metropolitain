@@ -271,9 +271,9 @@ const MetroMap = () => {
   const vehiclesRef = useRef<Map<string, TrackedVehicle>>(new Map());
   const lineGeometryRef = useRef<Map<string, Polyline>>(new Map());
   /** lineId -> its own badge styling, read straight off the already-fetched network data
-   *  (every feature is stamped with its line's color/text_color/short_name server-side —
+   *  (every feature is stamped with its line's color/text_color/short_name/mode server-side —
    *  see network.ts) rather than keeping a second copy of the line registry client-side. */
-  const lineMetaRef = useRef<Map<string, { color: string; textColor: string; shortName: string }>>(new Map());
+  const lineMetaRef = useRef<Map<string, { color: string; textColor: string; shortName: string; mode: string }>>(new Map());
   /** lineId -> the same small line-offset "unit" server-stamped onto that line's static
    *  GeoJSON features (see network.ts's OFFSET_STEPS) — used to nudge vehicle markers off
    *  raw track the same way the static line layer is nudged, see vehiclesToGeoJSON. */
@@ -295,6 +295,13 @@ const MetroMap = () => {
   const [speed, setSpeed] = useState<number>(DEFAULT_SPEED);
   const [disruptionsOpen, setDisruptionsOpen] = useState(false);
   const [upcomingOpen, setUpcomingOpen] = useState(false);
+  // Empty set = no isolation, everything renders as normal. Non-empty = only these lines
+  // render at full opacity; everything else (lines, stations, vehicles) dims — chosen over
+  // hiding entirely so the selected line's geographic context (where it sits relative to
+  // the rest of the network) stays visible, the same idea the isLive/not-live dimming
+  // already uses elsewhere on this map.
+  const [selectedLines, setSelectedLines] = useState<Set<string>>(new Set());
+  const [linesPanelOpen, setLinesPanelOpen] = useState(false);
   const [expandedDisruptionId, setExpandedDisruptionId] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(DEFAULT_THEME_MODE);
   const [systemPrefersDark, setSystemPrefersDark] = useState(true);
@@ -349,6 +356,31 @@ const MetroMap = () => {
     }
     return fmt.format(period.begin);
   };
+
+  const MODE_ORDER = ["metro", "rer", "transilien", "tram"] as const;
+  const MODE_LABEL: Record<string, { fr: string; en: string }> = {
+    metro: { fr: "MÉTRO", en: "METRO" },
+    rer: { fr: "RER", en: "RER" },
+    transilien: { fr: "TRANSILIEN", en: "TRANSILIEN" },
+    tram: { fr: "TRAMWAY", en: "TRAM" },
+  };
+  const lineCollator = new Intl.Collator("en", { numeric: true });
+  const linesByMode = MODE_ORDER.map((mode) => ({
+    mode,
+    lines: [...lineMetaRef.current.entries()]
+      .filter(([, meta]) => meta.mode === mode)
+      .sort((a, b) => lineCollator.compare(a[1].shortName, b[1].shortName)),
+  })).filter((group) => group.lines.length > 0);
+
+  const toggleLineSelection = (lineId: string) => {
+    setSelectedLines((prev) => {
+      const next = new Set(prev);
+      if (next.has(lineId)) next.delete(lineId);
+      else next.add(lineId);
+      return next;
+    });
+  };
+  const clearLineSelection = () => setSelectedLines(new Set());
 
   // Drives the curtain reveal once loading clears: waits a frame (so the closed state
   // paints first and the transform transition is guaranteed to fire), starts the parting
@@ -467,6 +499,47 @@ const MetroMap = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [themeMode]);
 
+  // Re-applies whenever the selection changes. Uses setPaintProperty rather than touching
+  // the underlying GeoJSON — network-lines/network-stations are a static source set once at
+  // load, and re-uploading ~900 features on every toggle would be real, unnecessary work for
+  // what's purely a paint-time decision. Guarded on the layers actually existing yet, since
+  // this can fire before "style.load" has added them.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.getLayer("network-lines")) return;
+
+    if (selectedLines.size === 0) {
+      map.setPaintProperty("network-lines", "line-opacity", ["case", ["get", "isLive"], 0.85, 0.35]);
+      map.setPaintProperty("network-stations", "circle-opacity", ["case", ["get", "isLive"], 0.85, 0.35]);
+      map.setPaintProperty("vehicles-glow", "circle-opacity", ["match", ["get", "certainty"], "confirmed", 0.35, 0.15]);
+      map.setPaintProperty("vehicles-badge", "circle-opacity", ["match", ["get", "certainty"], "confirmed", 1, 0.6]);
+      map.setPaintProperty("vehicles-label", "text-opacity", ["match", ["get", "certainty"], "confirmed", 1, 0.75]);
+      return;
+    }
+
+    const selected = ["literal", [...selectedLines]] as const;
+    map.setPaintProperty("network-lines", "line-opacity", ["case", ["in", ["get", "id"], selected], 0.9, 0.06]);
+    map.setPaintProperty("network-stations", "circle-opacity", ["case", ["in", ["get", "id"], selected], 0.9, 0.06]);
+    map.setPaintProperty("vehicles-glow", "circle-opacity", [
+      "case",
+      ["in", ["get", "lineId"], selected],
+      ["match", ["get", "certainty"], "confirmed", 0.35, 0.15],
+      0.03,
+    ]);
+    map.setPaintProperty("vehicles-badge", "circle-opacity", [
+      "case",
+      ["in", ["get", "lineId"], selected],
+      ["match", ["get", "certainty"], "confirmed", 1, 0.6],
+      0.06,
+    ]);
+    map.setPaintProperty("vehicles-label", "text-opacity", [
+      "case",
+      ["in", ["get", "lineId"], selected],
+      ["match", ["get", "certainty"], "confirmed", 1, 0.75],
+      0.06,
+    ]);
+  }, [selectedLines]);
+
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -510,11 +583,24 @@ const MetroMap = () => {
       // just "the" line's, to evaluate continuously every frame from its real schedule.
       for (const feature of network.features) {
         if (feature.geometry.type !== "LineString") continue;
-        const props = feature.properties as { branchId?: string; id?: string; color?: string; text_color?: string; short_name?: string; offset?: number };
+        const props = feature.properties as {
+          branchId?: string;
+          id?: string;
+          color?: string;
+          text_color?: string;
+          short_name?: string;
+          offset?: number;
+          mode?: string;
+        };
         if (!props.branchId) continue;
         lineGeometryRef.current.set(props.branchId, new Polyline(feature.geometry.coordinates as LngLat[]));
         if (props.id && props.color && props.short_name && !lineMetaRef.current.has(props.id)) {
-          lineMetaRef.current.set(props.id, { color: props.color, textColor: props.text_color ?? "#000000", shortName: props.short_name });
+          lineMetaRef.current.set(props.id, {
+            color: props.color,
+            textColor: props.text_color ?? "#000000",
+            shortName: props.short_name,
+            mode: props.mode ?? "metro",
+          });
           lineOffsetsRef.current.set(props.id, props.offset ?? 0);
         }
       }
@@ -687,7 +773,15 @@ const MetroMap = () => {
   }, []);
 
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+    // overflow: hidden here, not just on <body>/<html> — a focused element's default
+    // "scroll into view" browser behavior can still shift *body's own* internal scroll
+    // position even with overflow: hidden set on body (that CSS only blocks the scrollbar
+    // and user-drag scrolling, not programmatic/focus-driven scrolling), which then visually
+    // drags every position:absolute/fixed piece of this app's UI sideways with it. Clipping
+    // at this component's own root — the actual full-viewport box nothing should ever
+    // visually escape — closes the gap wherever the underlying overflow enters from, rather
+    // than chasing the symptom one ancestor at a time.
+    <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }}>
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
 
       {/* First-load overlay — the network alone is ~900 features plus a live WebSocket
@@ -1012,6 +1106,142 @@ const MetroMap = () => {
             ? `${activeLineIds.size} line${activeLineIds.size > 1 ? "s" : ""} disrupted`
             : `${activeLineIds.size} ligne${activeLineIds.size > 1 ? "s" : ""} perturbée${activeLineIds.size > 1 ? "s" : ""}`}
       </button>
+
+      {/* Line isolation: mirrors the disruption badge on the opposite corner, opens a panel
+          on the opposite side, same reasoning throughout (toggle open/closed, quiet when
+          nothing's selected, a count instead of raw state when it isn't). */}
+      <button
+        onClick={() => setLinesPanelOpen((o) => !o)}
+        style={{
+          position: "absolute",
+          bottom: 16,
+          right: 16,
+          zIndex: 5,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          background: panelBg,
+          color: t.ink,
+          border: `1px solid ${selectedLines.size > 0 ? t.amberLamp : t.bronze}`,
+          borderRadius: 3,
+          padding: "6px 10px",
+          fontSize: 12,
+          fontFamily: "system-ui, sans-serif",
+          cursor: "pointer",
+        }}
+      >
+        {selectedLines.size === 0
+          ? lang === "en"
+            ? "Lines"
+            : "Lignes"
+          : lang === "en"
+            ? `${selectedLines.size} line${selectedLines.size > 1 ? "s" : ""} shown`
+            : `${selectedLines.size} ligne${selectedLines.size > 1 ? "s" : ""} affichée${selectedLines.size > 1 ? "s" : ""}`}
+      </button>
+
+      {/* Slide-in panel, from the left — the disruptions panel already owns the right side. */}
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          bottom: 0,
+          zIndex: 5,
+          width: 320,
+          maxWidth: "85vw",
+          background: panelBgSolid,
+          borderRight: `1px solid ${t.bronze}`,
+          color: t.ink,
+          fontFamily: "system-ui, sans-serif",
+          fontSize: 12,
+          padding: 16,
+          overflowY: "auto",
+          transform: linesPanelOpen ? "translateX(0)" : "translateX(-100%)",
+          transition: "transform 0.25s ease",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <span style={{ letterSpacing: "0.1em", fontSize: 11, opacity: 0.7 }}>{lang === "en" ? "LINES" : "LIGNES"}</span>
+          <button
+            onClick={() => setLinesPanelOpen(false)}
+            style={{
+              background: "none",
+              border: "none",
+              color: t.ink,
+              fontSize: 18,
+              cursor: "pointer",
+              lineHeight: 1,
+              width: 32,
+              height: 32,
+              marginLeft: -6,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+            aria-label={lang === "en" ? "Close" : "Fermer"}
+          >
+            ×
+          </button>
+        </div>
+
+        {selectedLines.size > 0 && (
+          <button
+            onClick={clearLineSelection}
+            style={{
+              background: "none",
+              border: `1px solid ${t.bronze}`,
+              color: t.ink,
+              borderRadius: 3,
+              padding: "4px 8px",
+              fontSize: 11,
+              cursor: "pointer",
+              marginBottom: 14,
+            }}
+          >
+            {lang === "en" ? "Show all lines" : "Tout afficher"}
+          </button>
+        )}
+
+        {linesByMode.map(({ mode, lines }) => (
+          <div key={mode} style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 10, opacity: 0.6, letterSpacing: "0.1em", marginBottom: 6 }}>
+              {lang === "en" ? MODE_LABEL[mode].en : MODE_LABEL[mode].fr}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {lines.map(([lineId, meta]) => {
+                const isSelected = selectedLines.has(lineId);
+                const dimmed = selectedLines.size > 0 && !isSelected;
+                return (
+                  <button
+                    key={lineId}
+                    onClick={() => toggleLineSelection(lineId)}
+                    title={meta.shortName}
+                    style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: "50%",
+                      background: meta.color,
+                      color: meta.textColor,
+                      border: isSelected ? `2px solid ${t.amberLamp}` : "2px solid transparent",
+                      opacity: dimmed ? 0.35 : 1,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      flexShrink: 0,
+                      padding: 0,
+                    }}
+                  >
+                    {meta.shortName}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
 
       {/* Slide-in panel: map stays visible and interactive behind it, unlike a full modal. */}
       <div
