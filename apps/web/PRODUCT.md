@@ -63,7 +63,7 @@ A second external dependency is now needed for translation (French disruption te
 
 ## Security & Operational Constraints
 
-- Secrets (IDFM key, DeepL key) live only in server-side `.env` files on the Hetzner box, never in the client bundle, never committed to git.
+- Secrets (IDFM key, DeepL key) live only in server-side `.env` files, never in the client bundle, never committed to git.
 - CORS on the backend is locked to the actual frontend origin only — no open/wildcard origin — so no third party can ride our IDFM quota by pointing their own site at our WebSocket/API.
 - Mobile is a first-class target, not an afterthought, given expected traffic: the hover-based detail popover needs a tap-based equivalent (tap opens, tap elsewhere or an explicit close dismisses it — no hover-only affordance), and rendering/animation performance must hold up on mid-range phones, not just desktop.
 - Accessibility scope is deliberately bounded, not open-ended: the live map canvas itself (motion, position) is inherently visual and not meaningfully screen-reader-accessible, but the ticker, legend, popovers, and all UI chrome get proper contrast, focus states, and ARIA labeling as a text-equivalent baseline. This boundary is a conscious decision, not an omission.
