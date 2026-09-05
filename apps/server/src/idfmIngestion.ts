@@ -1,25 +1,16 @@
 import { config } from "./config/index.js";
 import { LIVE_LINES, LINE_BY_REF, quayLocation, type LineDefinition } from "./network.js";
 import { translateToEnglish } from "./translate.js";
-import type { VehicleState, DisruptionState, DisruptionSeverity, SchedulePoint } from "./types/index.js";
-
-const BASE_URL = "https://prim.iledefrance-mobilites.fr/marketplace";
-
-/**
- * Hard safety ceiling on real IDFM calls per day, independent of the polling interval
- * math in PRODUCT.md — a defensive backstop against a reconnect storm or a stuck retry
- * loop silently blowing through the quota while nobody's watching. Positions and
- * disruptions are tracked separately since they're different quota buckets.
- */
-const MAX_POSITION_CALLS_PER_DAY = 1400;
-// One call/cycle now (see fetchDisruptions — the bulk endpoint, not one call per line), so
-// this is real headroom under IDFM's own 1,000/day quota for this endpoint, not just a
-// number that happens not to trip. The previous "1400, 7 lines x this many cycles/day" cap
-// was sized for a 7-line, one-call-per-line design; by the time we tracked 44 lines it was
-// exhausting itself in the first ~62 minutes of every day (1400 / 44 lines ≈ 31 cycles),
-// silently skipping disruption fetching for the rest of the day, every day — the real
-// reason disruptions were never showing, confirmed directly against IDFM's real feed.
-const MAX_DISRUPTION_CALLS_PER_DAY = 700;
+import type {
+  VehicleState,
+  DisruptionState,
+  DisruptionSeverity,
+  SchedulePoint,
+  EstimatedCall,
+  EstimatedVehicleJourney,
+  ResolvedCall,
+  BulkDisruption,
+} from "./types/index.js";
 
 class DailyBudget {
   private count = 0;
@@ -51,16 +42,6 @@ function extractQuayCode(stopPointRef: string): string | null {
   return /^\d+$/.test(last) ? last : null;
 }
 
-interface EstimatedCall {
-  StopPointRef?: { value?: string };
-  ArrivalStopAssignment?: { ExpectedQuayRef?: { value?: string } };
-  DepartureStopAssignment?: { ExpectedQuayRef?: { value?: string } };
-  ExpectedArrivalTime?: string;
-  ExpectedDepartureTime?: string;
-  AimedArrivalTime?: string;
-  AimedDepartureTime?: string;
-}
-
 /**
  * The precise quay-level reference. For rail/RER calls it lives in the stop assignment
  * (ArrivalStopAssignment/DepartureStopAssignment.ExpectedQuayRef) — the top-level
@@ -76,23 +57,12 @@ function callQuayRef(call: EstimatedCall): string | null {
   );
 }
 
-interface EstimatedVehicleJourney {
-  LineRef?: { value?: string };
-  DatedVehicleJourneyRef?: { value?: string };
-  EstimatedCalls?: { EstimatedCall?: EstimatedCall[] };
-}
-
 function callTime(call: EstimatedCall, which: "arrival" | "departure"): number | null {
   const t =
     which === "arrival"
       ? call.ExpectedArrivalTime ?? call.AimedArrivalTime
       : call.ExpectedDepartureTime ?? call.AimedDepartureTime;
   return t ? Date.parse(t) : null;
-}
-
-interface ResolvedCall {
-  lngLat: [number, number];
-  time: number;
 }
 
 /**
@@ -145,12 +115,12 @@ function scheduleFromCalls(line: LineDefinition, calls: EstimatedCall[]): { sche
 }
 
 export async function fetchVehicles(): Promise<VehicleState[]> {
-  if (!positionBudget.tryConsume(MAX_POSITION_CALLS_PER_DAY)) {
+  if (!positionBudget.tryConsume(config.maxPositionCallsPerDay)) {
     console.warn("[idfm] daily position call budget exhausted, skipping this cycle");
     return [];
   }
 
-  const res = await fetch(`${BASE_URL}/estimated-timetable`, { headers: { apikey: config.primApiKey } });
+  const res = await fetch(`${config.primBaseUrl}/estimated-timetable`, { headers: { apikey: config.primApiKey } });
   if (!res.ok) throw new Error(`estimated-timetable ${res.status}`);
   const json = await res.json();
 
@@ -212,8 +182,6 @@ export async function fetchVehicles(): Promise<VehicleState[]> {
   return vehicles;
 }
 
-const DISRUPTIONS_BULK_URL = "https://prim.iledefrance-mobilites.fr/marketplace/disruptions_bulk/disruptions/v2";
-
 /**
  * "line:IDFM:C01728" -> "C01728" -> our LineDefinition, by matching against the same bare
  * code embedded in lineRef ("STIF:Line::C01728:"). Built once from LIVE_LINES: this bulk
@@ -223,16 +191,6 @@ const DISRUPTIONS_BULK_URL = "https://prim.iledefrance-mobilites.fr/marketplace/
 const LINE_BY_BARE_CODE: Map<string, LineDefinition> = new Map(
   LIVE_LINES.map((l) => [l.lineRef.replace(/^STIF:Line::/, "").replace(/:$/, ""), l])
 );
-
-interface BulkDisruption {
-  id: string;
-  title?: string;
-  message?: string;
-  shortMessage?: string;
-  severity?: string;
-  applicationPeriods?: { begin?: string; end?: string }[];
-  impactedSections?: { lineId?: string }[];
-}
 
 const HTML_ENTITY_MAP: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
@@ -293,7 +251,7 @@ function parseParisDateTime(s: string): number | null {
 }
 
 export async function fetchDisruptions(): Promise<DisruptionState[]> {
-  if (!disruptionBudget.tryConsume(MAX_DISRUPTION_CALLS_PER_DAY)) {
+  if (!disruptionBudget.tryConsume(config.maxDisruptionCallsPerDay)) {
     console.warn("[idfm] daily disruption call budget exhausted, skipping this cycle");
     return [];
   }
@@ -304,7 +262,7 @@ export async function fetchDisruptions(): Promise<DisruptionState[]> {
   // textFr must always genuinely be French, since translateToEnglish assumes a French
   // source — this pins it rather than trusting an ambient default that clearly isn't
   // consistent across HTTP clients.
-  const res = await fetch(DISRUPTIONS_BULK_URL, { headers: { apiKey: config.primApiKey, "Accept-Language": "fr-FR" } });
+  const res = await fetch(config.disruptionsBulkUrl, { headers: { apiKey: config.primApiKey, "Accept-Language": "fr-FR" } });
   if (!res.ok) throw new Error(`disruptions_bulk ${res.status}`);
   const json = await res.json();
   const items: BulkDisruption[] = json?.disruptions ?? [];

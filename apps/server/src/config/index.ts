@@ -13,6 +13,11 @@ function required(name: string): string {
   return value;
 }
 
+// Fixed IDFM/DeepL endpoints — not deployment-specific (never meaningfully overridden
+// per-environment), but still centralized here rather than hardcoded inline wherever a
+// fetch() happens to need one.
+const PRIM_BASE_URL = "https://prim.iledefrance-mobilites.fr/marketplace";
+
 export const config = {
   port: Number(process.env.PORT ?? 4000),
   // Comma-separated so both the apex and www can be allowed — see index.ts for why.
@@ -25,4 +30,21 @@ export const config = {
   // disruptions ~2min (one bulk call/cycle — see idfmIngestion.ts).
   positionIntervalMs: Number(process.env.POSITION_INTERVAL_MS ?? 90_000),
   disruptionIntervalMs: Number(process.env.DISRUPTION_INTERVAL_MS ?? 120_000),
+
+  primBaseUrl: PRIM_BASE_URL,
+  disruptionsBulkUrl: `${PRIM_BASE_URL}/disruptions_bulk/disruptions/v2`,
+  deeplUrl: "https://api-free.deepl.com/v2/translate",
+
+  // Hard safety ceilings on real IDFM calls per day, independent of the polling-interval
+  // math above — a defensive backstop against a reconnect storm or a stuck retry loop
+  // silently blowing through the quota while nobody's watching. Positions and disruptions
+  // are tracked separately since they're different quota buckets. Disruptions run one
+  // call/cycle (the bulk endpoint, not one call per line — see idfmIngestion.ts), so 700
+  // is real headroom under IDFM's own 1,000/day quota for that endpoint, not just a number
+  // that happens not to trip: an earlier "1400, 7 lines x this many cycles/day" cap — sized
+  // for a 7-line, one-call-per-line design — was exhausting itself in the first ~62 minutes
+  // of every day once 44 lines were tracked, silently skipping disruption fetching for the
+  // rest of the day, every day. Confirmed directly against IDFM's real feed.
+  maxPositionCallsPerDay: Number(process.env.MAX_POSITION_CALLS_PER_DAY ?? 1400),
+  maxDisruptionCallsPerDay: Number(process.env.MAX_DISRUPTION_CALLS_PER_DAY ?? 700),
 };

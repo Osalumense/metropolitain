@@ -22,7 +22,7 @@ export async function translateToEnglish(frenchText: string): Promise<string> {
   }
 
   try {
-    const res = await fetch("https://api-free.deepl.com/v2/translate", {
+    const res = await fetch(config.deeplUrl, {
       method: "POST",
       headers: {
         Authorization: `DeepL-Auth-Key ${apiKey}`,

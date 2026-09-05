@@ -46,3 +46,36 @@ export interface DisruptionState {
   /** Empty means no known window — treated as always-active. */
   periods: DisruptionPeriod[];
 }
+
+// --- Raw IDFM API response shapes (idfmIngestion.ts parses these into the types above) ---
+
+export interface EstimatedCall {
+  StopPointRef?: { value?: string };
+  ArrivalStopAssignment?: { ExpectedQuayRef?: { value?: string } };
+  DepartureStopAssignment?: { ExpectedQuayRef?: { value?: string } };
+  ExpectedArrivalTime?: string;
+  ExpectedDepartureTime?: string;
+  AimedArrivalTime?: string;
+  AimedDepartureTime?: string;
+}
+
+export interface EstimatedVehicleJourney {
+  LineRef?: { value?: string };
+  DatedVehicleJourneyRef?: { value?: string };
+  EstimatedCalls?: { EstimatedCall?: EstimatedCall[] };
+}
+
+export interface ResolvedCall {
+  lngLat: [number, number];
+  time: number;
+}
+
+export interface BulkDisruption {
+  id: string;
+  title?: string;
+  message?: string;
+  shortMessage?: string;
+  severity?: string;
+  applicationPeriods?: { begin?: string; end?: string }[];
+  impactedSections?: { lineId?: string }[];
+}
