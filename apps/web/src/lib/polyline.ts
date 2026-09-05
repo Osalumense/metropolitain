@@ -24,6 +24,32 @@ const bearingDegrees = (a: LngLat, b: LngLat): number => {
 };
 
 /**
+ * Moves `point` `distanceMeters` along `bearingDeg` (standard spherical destination-point
+ * formula) — used to nudge a vehicle marker sideways off its raw track, the same way the
+ * static line layer is nudged via MapLibre's line-offset paint property. That paint
+ * property only ever shifts pixels on screen, never the underlying coordinates, so a
+ * vehicle computed straight from the raw polyline sits exactly where two lines' real,
+ * physically shared track (e.g. RER A and E near Vincennes) actually coincide — reading as
+ * if it belongs to whichever line the viewer happens to associate with that path, not
+ * whichever line it's actually on. This closes that gap for the moving marker itself.
+ */
+export const offsetPoint = (point: LngLat, bearingDeg: number, distanceMeters: number): LngLat => {
+  if (distanceMeters === 0) return point;
+  const [lon, lat] = point;
+  const angularDist = distanceMeters / EARTH_RADIUS_M;
+  const bearingRad = toRad(bearingDeg);
+  const latRad = toRad(lat);
+  const lonRad = toRad(lon);
+
+  const newLatRad = Math.asin(Math.sin(latRad) * Math.cos(angularDist) + Math.cos(latRad) * Math.sin(angularDist) * Math.cos(bearingRad));
+  const newLonRad =
+    lonRad +
+    Math.atan2(Math.sin(bearingRad) * Math.sin(angularDist) * Math.cos(latRad), Math.cos(angularDist) - Math.sin(latRad) * Math.sin(newLatRad));
+
+  return [(newLonRad * 180) / Math.PI, (newLatRad * 180) / Math.PI];
+};
+
+/**
  * Client-side mirror of apps/server/src/geometry.ts's Polyline (pointAtFraction only —
  * the client never needs nearestFraction, that's a server-side ingestion concern).
  * Duplicated rather than shared across the two packages for one small, stable file.

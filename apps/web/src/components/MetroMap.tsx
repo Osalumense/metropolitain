@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import maplibregl, { type Map as MapLibreMap } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { themes, type ThemePalette } from "@/lib/theme";
-import { Polyline, type LngLat } from "@/lib/polyline";
+import { Polyline, offsetPoint, type LngLat } from "@/lib/polyline";
 import { config } from "@/config";
 
 const API_URL = config.apiUrl;
@@ -177,7 +177,23 @@ const fractionAt = (schedule: SchedulePoint[], virtualNow: number): number => {
   return Math.max(0, Math.min(1, extrapolated));
 };
 
-const vehiclesToGeoJSON = (vehicles: TrackedVehicle[], lineGeometry: Map<string, Polyline>, now: number, speed: number): GeoJSON.FeatureCollection => {
+// Real-world meters per line-offset "unit" (the same unit network.ts's OFFSET_STEPS uses
+// for the static line layer's pixel-based line-offset paint property). Vehicle markers
+// aren't drawn by that paint property — they're plain points, computed straight from the
+// raw, un-offset polyline — so on any stretch of genuinely shared physical track (see
+// offsetPoint's own comment), a vehicle would otherwise sit exactly on top of whichever
+// line's raw path is there, regardless of which line it's actually running on. Nudging the
+// marker itself, in the same direction/line-relative-magnitude its own static line already
+// uses, keeps it visually with its own line instead of an unrelated coincident one.
+const VEHICLE_OFFSET_METERS_PER_UNIT = 8;
+
+const vehiclesToGeoJSON = (
+  vehicles: TrackedVehicle[],
+  lineGeometry: Map<string, Polyline>,
+  lineOffsets: Map<string, number>,
+  now: number,
+  speed: number
+): GeoJSON.FeatureCollection => {
   return {
     type: "FeatureCollection",
     features: vehicles
@@ -186,7 +202,9 @@ const vehiclesToGeoJSON = (vehicles: TrackedVehicle[], lineGeometry: Map<string,
         if (!polyline) return null;
         const virtualNow = v.virtualAnchorTime + (now - v.realAnchorTime) * speed;
         const fraction = fractionAt(v.schedule, virtualNow);
-        const { position, bearing } = polyline.pointAtFraction(fraction);
+        const { position: rawPosition, bearing } = polyline.pointAtFraction(fraction);
+        const offsetUnits = lineOffsets.get(v.lineId) ?? 0;
+        const position = offsetPoint(rawPosition, bearing + 90, offsetUnits * VEHICLE_OFFSET_METERS_PER_UNIT);
         return {
           type: "Feature" as const,
           geometry: { type: "Point" as const, coordinates: position },
@@ -249,6 +267,10 @@ const MetroMap = () => {
    *  (every feature is stamped with its line's color/text_color/short_name server-side —
    *  see network.ts) rather than keeping a second copy of the line registry client-side. */
   const lineMetaRef = useRef<Map<string, { color: string; textColor: string; shortName: string }>>(new Map());
+  /** lineId -> the same small line-offset "unit" server-stamped onto that line's static
+   *  GeoJSON features (see network.ts's OFFSET_STEPS) — used to nudge vehicle markers off
+   *  raw track the same way the static line layer is nudged, see vehiclesToGeoJSON. */
+  const lineOffsetsRef = useRef<Map<string, number>>(new Map());
   const speedRef = useRef<number>(DEFAULT_SPEED);
   const [disruptions, setDisruptions] = useState<Disruption[]>([]);
   const [lang, setLang] = useState<"en" | "fr">("fr");
@@ -481,11 +503,12 @@ const MetroMap = () => {
       // just "the" line's, to evaluate continuously every frame from its real schedule.
       for (const feature of network.features) {
         if (feature.geometry.type !== "LineString") continue;
-        const props = feature.properties as { branchId?: string; id?: string; color?: string; text_color?: string; short_name?: string };
+        const props = feature.properties as { branchId?: string; id?: string; color?: string; text_color?: string; short_name?: string; offset?: number };
         if (!props.branchId) continue;
         lineGeometryRef.current.set(props.branchId, new Polyline(feature.geometry.coordinates as LngLat[]));
         if (props.id && props.color && props.short_name && !lineMetaRef.current.has(props.id)) {
           lineMetaRef.current.set(props.id, { color: props.color, textColor: props.text_color ?? "#000000", shortName: props.short_name });
+          lineOffsetsRef.current.set(props.id, props.offset ?? 0);
         }
       }
 
@@ -598,7 +621,7 @@ const MetroMap = () => {
         lastRender = tick;
         const src = map.getSource("vehicles") as maplibregl.GeoJSONSource | undefined;
         if (src) {
-          src.setData(vehiclesToGeoJSON([...vehiclesRef.current.values()], lineGeometryRef.current, Date.now(), speedRef.current));
+          src.setData(vehiclesToGeoJSON([...vehiclesRef.current.values()], lineGeometryRef.current, lineOffsetsRef.current, Date.now(), speedRef.current));
         }
       }
       raf = requestAnimationFrame(animate);
