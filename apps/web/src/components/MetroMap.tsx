@@ -177,23 +177,30 @@ const fractionAt = (schedule: SchedulePoint[], virtualNow: number): number => {
   return Math.max(0, Math.min(1, extrapolated));
 };
 
-// Real-world meters per line-offset "unit" (the same unit network.ts's OFFSET_STEPS uses
-// for the static line layer's pixel-based line-offset paint property). Vehicle markers
-// aren't drawn by that paint property — they're plain points, computed straight from the
-// raw, un-offset polyline — so on any stretch of genuinely shared physical track (see
-// offsetPoint's own comment), a vehicle would otherwise sit exactly on top of whichever
-// line's raw path is there, regardless of which line it's actually running on. Nudging the
-// marker itself, in the same direction/line-relative-magnitude its own static line already
-// uses, keeps it visually with its own line instead of an unrelated coincident one.
-const VEHICLE_OFFSET_METERS_PER_UNIT = 8;
+// The OFFSET_STEPS unit (network.ts) is genuinely a pixel count — it's fed straight into
+// MapLibre's own line-offset paint property, which stays visually constant in screen pixels
+// at every zoom level (its real-world size shrinks as you zoom in). A vehicle marker isn't
+// drawn by that paint property, so matching it requires doing the same pixel-to-meters
+// conversion MapLibre does internally for Web Mercator, using the current zoom — a fixed
+// meters-per-unit constant looks fine at whatever zoom it was tuned against, then badly
+// overshoots at closer zooms (tens of real meters is a huge number of screen pixels once
+// buildings are rendering), throwing vehicles visibly off their own track.
+const EARTH_CIRCUMFERENCE_M = 40075016.686;
+const REFERENCE_LAT_RAD = (48.8566 * Math.PI) / 180; // Paris's own latitude varies too little across the city to matter here
+
+const metersPerPixel = (zoom: number): number => {
+  return (EARTH_CIRCUMFERENCE_M * Math.cos(REFERENCE_LAT_RAD)) / (256 * 2 ** zoom);
+};
 
 const vehiclesToGeoJSON = (
   vehicles: TrackedVehicle[],
   lineGeometry: Map<string, Polyline>,
   lineOffsets: Map<string, number>,
   now: number,
-  speed: number
+  speed: number,
+  zoom: number
 ): GeoJSON.FeatureCollection => {
+  const metersPerOffsetUnit = metersPerPixel(zoom);
   return {
     type: "FeatureCollection",
     features: vehicles
@@ -204,7 +211,7 @@ const vehiclesToGeoJSON = (
         const fraction = fractionAt(v.schedule, virtualNow);
         const { position: rawPosition, bearing } = polyline.pointAtFraction(fraction);
         const offsetUnits = lineOffsets.get(v.lineId) ?? 0;
-        const position = offsetPoint(rawPosition, bearing + 90, offsetUnits * VEHICLE_OFFSET_METERS_PER_UNIT);
+        const position = offsetPoint(rawPosition, bearing + 90, offsetUnits * metersPerOffsetUnit);
         return {
           type: "Feature" as const,
           geometry: { type: "Point" as const, coordinates: position },
@@ -621,7 +628,9 @@ const MetroMap = () => {
         lastRender = tick;
         const src = map.getSource("vehicles") as maplibregl.GeoJSONSource | undefined;
         if (src) {
-          src.setData(vehiclesToGeoJSON([...vehiclesRef.current.values()], lineGeometryRef.current, lineOffsetsRef.current, Date.now(), speedRef.current));
+          src.setData(
+            vehiclesToGeoJSON([...vehiclesRef.current.values()], lineGeometryRef.current, lineOffsetsRef.current, Date.now(), speedRef.current, map.getZoom())
+          );
         }
       }
       raf = requestAnimationFrame(animate);
