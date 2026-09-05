@@ -604,28 +604,50 @@ export default function MetroMap() {
     };
     raf = requestAnimationFrame(animate);
 
-    // WebSocket — live positions + disruptions.
-    const ws = new WebSocket(WS_URL);
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      if (msg.type === "positions") {
-        const receivedAt = Date.now();
-        const next = new Map<string, TrackedVehicle>();
-        for (const v of msg.data as Vehicle[]) {
-          next.set(v.tripId, { ...v, virtualAnchorTime: v.schedule[0]?.time ?? receivedAt, realAnchorTime: receivedAt });
+    // WebSocket — live positions + disruptions. Reconnects automatically with backoff on
+    // any drop (network blip, phone backgrounding, a tunnel) — previously a dropped
+    // connection just sat on "disconnected" forever until someone manually reloaded, which
+    // for the actual audience here (people on phones) was the most likely failure mode.
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectDelayMs = 1000;
+    const MAX_RECONNECT_DELAY_MS = 30_000;
+    let cancelled = false;
+
+    function connectWebSocket() {
+      ws = new WebSocket(WS_URL);
+      ws.onopen = () => {
+        setConnected(true);
+        reconnectDelayMs = 1000; // back to the fast retry once a connection actually succeeds
+      };
+      ws.onclose = () => {
+        setConnected(false);
+        if (cancelled) return;
+        reconnectTimer = setTimeout(connectWebSocket, reconnectDelayMs);
+        reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
+      };
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "positions") {
+          const receivedAt = Date.now();
+          const next = new Map<string, TrackedVehicle>();
+          for (const v of msg.data as Vehicle[]) {
+            next.set(v.tripId, { ...v, virtualAnchorTime: v.schedule[0]?.time ?? receivedAt, realAnchorTime: receivedAt });
+          }
+          vehiclesRef.current = next;
+          setLastUpdate(Date.now());
+        } else if (msg.type === "disruptions") {
+          setDisruptions(msg.data);
         }
-        vehiclesRef.current = next;
-        setLastUpdate(Date.now());
-      } else if (msg.type === "disruptions") {
-        setDisruptions(msg.data);
-      }
-    };
+      };
+    }
+    connectWebSocket();
 
     return () => {
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       cancelAnimationFrame(raf);
-      ws.close();
+      ws?.close();
       map.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

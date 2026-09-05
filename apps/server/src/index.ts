@@ -36,7 +36,17 @@ app.get("/api/network", (_req, res) => {
 });
 
 const httpServer = createServer(app);
-const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+const wss = new WebSocketServer({
+  server: httpServer,
+  path: "/ws",
+  // A real browser always sends an Origin header on a cross-origin WebSocket connection —
+  // unspoofable by the page's own JS — so this closes the one gap our REST CORS didn't
+  // cover: someone else's site pointing its own client straight at our socket. A script
+  // with a deliberately forged Origin isn't stopped by this any more than curl bypasses
+  // CORS today; that's not what this is for. Requests with no Origin at all (non-browser
+  // tools — our own diagnostics included) are left alone rather than blocked.
+  verifyClient: (info: { origin: string }) => !info.origin || FRONTEND_ORIGINS.includes(info.origin),
+});
 
 let latestVehicles: VehicleState[] = [];
 let latestDisruptions: DisruptionState[] = [];
