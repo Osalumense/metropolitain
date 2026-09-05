@@ -158,6 +158,7 @@ export async function fetchVehicles(): Promise<VehicleState[]> {
   const journeys: EstimatedVehicleJourney[] = frames.flatMap((f: { EstimatedVehicleJourney?: EstimatedVehicleJourney[] }) => f.EstimatedVehicleJourney ?? []);
 
   const vehicles: VehicleState[] = [];
+  const now = Date.now();
 
   // Branch-matching (scheduleFromCalls) is real CPU work — hundreds of journeys x several
   // branches x calls, each scanning a polyline. Run entirely synchronously, this would
@@ -173,17 +174,31 @@ export async function fetchVehicles(): Promise<VehicleState[]> {
       const calls = journey.EstimatedCalls?.EstimatedCall ?? [];
       if (calls.length > 0) {
         const result = scheduleFromCalls(line, calls);
-        if (result && result.schedule.length > 0) {
-          vehicles.push({
-            tripId: journey.DatedVehicleJourneyRef?.value ?? `${line.id}-${Math.random()}`,
-            lineId: line.id,
-            branchId: result.branchId,
-            lineShortName: line.shortName,
-            lineColor: line.color,
-            lineLabelColor: line.textColor,
-            certainty: "predicted", // this feed never carries raw GPS — see PRODUCT.md
-            schedule: result.schedule,
-          });
+        if (result) {
+          const { schedule, branchId } = result;
+          // IDFM publishes predicted times well before a journey actually starts, and
+          // doesn't necessarily drop one the instant it finishes — the feed alone doesn't
+          // say "this train is in service right now". A single resolved call can't be
+          // interpolated between (there's nothing to interpolate — it's one point), and a
+          // journey whose entire predicted window is still ahead of or already behind the
+          // current moment isn't a train anyone would actually see moving. Without this, a
+          // quiet network (the small hours, the last runs finished, the first runs not yet
+          // started) still renders as if every line were running normally.
+          const first = schedule[0]?.time;
+          const last = schedule[schedule.length - 1]?.time;
+          const isCurrentlyRunning = schedule.length >= 2 && first !== undefined && last !== undefined && now >= first && now <= last;
+          if (isCurrentlyRunning) {
+            vehicles.push({
+              tripId: journey.DatedVehicleJourneyRef?.value ?? `${line.id}-${Math.random()}`,
+              lineId: line.id,
+              branchId,
+              lineShortName: line.shortName,
+              lineColor: line.color,
+              lineLabelColor: line.textColor,
+              certainty: "predicted", // this feed never carries raw GPS — see PRODUCT.md
+              schedule,
+            });
+          }
         }
       }
     }
