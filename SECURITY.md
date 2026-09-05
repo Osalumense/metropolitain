@@ -1,6 +1,8 @@
 # Security Policy
 
-This project runs a real, publicly-deployed service at [metropolitain.live](https://metropolitain.live). If you find a security vulnerability — in this code, or in how the live deployment is configured — please report it privately rather than opening a public issue.
+This only covers genuine security vulnerabilities. Regular bugs, feature requests, and contributions are all welcome as normal public [GitHub Issues](../../issues) and PRs — see [README.md](README.md#contributing). Nothing below changes that.
+
+This project runs a real, publicly-deployed service at [metropolitain.live](https://metropolitain.live). If you find an actual security vulnerability — something exploitable, like a way to bypass CORS/origin checks, leak secrets, or abuse the API/WebSocket beyond its intended use — report it privately (below) instead of as a public issue, so it isn't a working exploit for anyone reading issues before it's fixed.
 
 ## Reporting
 
