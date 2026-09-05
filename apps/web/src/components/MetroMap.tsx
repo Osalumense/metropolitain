@@ -106,8 +106,11 @@ const CURTAIN_DURATION_MS = 900;
 const TOUR_SEEN_KEY = "metropolitain_tour_seen";
 
 interface TourStepDef {
-  /** Which element to spotlight — null for the intro step, which has no single target. */
-  ref: "speed" | "themeLang" | "disruption" | null;
+  /** Which element to spotlight — null for the intro step, which has no single target.
+   *  "themeLang" spans two real DOM siblings (.mp-theme and .mp-lang, kept separate on
+   *  purpose — see the note above their <style> block), so its rect is a union of both
+   *  rather than one element's own bounding box. */
+  ref: "speed" | "themeLang" | "disruption" | "lines" | null;
   titleFr: string;
   titleEn: string;
   bodyFr: string;
@@ -135,8 +138,8 @@ const TOUR_STEPS: TourStepDef[] = [
     ref: "themeLang",
     titleFr: "Thème et langue",
     titleEn: "Theme and language",
-    bodyFr: "Passez du mode sombre au mode clair, ou basculez entre français et anglais, à tout moment.",
-    bodyEn: "Switch between dark and light mode, or between French and English, anytime.",
+    bodyFr: "Passez du mode sombre au mode clair, basculez entre français et anglais, ou revoyez cette visite, à tout moment.",
+    bodyEn: "Switch between dark and light mode, between French and English, or replay this tour, anytime.",
   },
   {
     ref: "disruption",
@@ -144,6 +147,13 @@ const TOUR_STEPS: TourStepDef[] = [
     titleEn: "Live disruptions",
     bodyFr: "Cet indicateur affiche les perturbations de trafic en cours, ligne par ligne.",
     bodyEn: "This shows current service disruptions, line by line.",
+  },
+  {
+    ref: "lines",
+    titleFr: "Isoler une ou plusieurs lignes",
+    titleEn: "Isolate one or more lines",
+    bodyFr: "Choisissez une ou plusieurs lignes pour les faire ressortir et estomper le reste du réseau.",
+    bodyEn: "Pick one or more lines to make them stand out and dim the rest of the network.",
   },
 ];
 
@@ -313,7 +323,9 @@ const MetroMap = () => {
   const [tourRect, setTourRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
   const speedControlRef = useRef<HTMLDivElement>(null);
   const themeLangRef = useRef<HTMLDivElement>(null);
+  const langRef = useRef<HTMLDivElement>(null);
   const disruptionBadgeRef = useRef<HTMLButtonElement>(null);
+  const linesBadgeRef = useRef<HTMLButtonElement>(null);
 
   const isDark = themeMode === "auto" ? systemPrefersDark : themeMode === "dark";
   const t = isDark ? themes.dark : themes.light;
@@ -421,10 +433,30 @@ const MetroMap = () => {
     }
     const refKey = TOUR_STEPS[tourStep].ref;
     const measure = () => {
+      // "themeLang" spotlights two real sibling elements (.mp-theme and .mp-lang — see
+      // the note on why they're siblings, not nested) as one union rect, rather than just
+      // whichever one happened to have a ref attached — otherwise the spotlight silently
+      // misses the language toggle and replay-tour button, which live in the other div.
+      if (refKey === "themeLang") {
+        const r1 = themeLangRef.current?.getBoundingClientRect();
+        const r2 = langRef.current?.getBoundingClientRect();
+        if (!r1 && !r2) {
+          setTourRect(null);
+          return;
+        }
+        const rects = [r1, r2].filter((r): r is DOMRect => !!r);
+        const top = Math.min(...rects.map((r) => r.top));
+        const left = Math.min(...rects.map((r) => r.left));
+        const right = Math.max(...rects.map((r) => r.right));
+        const bottom = Math.max(...rects.map((r) => r.bottom));
+        setTourRect({ top, left, width: right - left, height: bottom - top });
+        return;
+      }
+
       let el: HTMLElement | null = null;
       if (refKey === "speed") el = speedControlRef.current;
-      else if (refKey === "themeLang") el = themeLangRef.current;
       else if (refKey === "disruption") el = disruptionBadgeRef.current;
+      else if (refKey === "lines") el = linesBadgeRef.current;
       if (!el) {
         setTourRect(null);
         return;
@@ -1019,7 +1051,7 @@ const MetroMap = () => {
         ))}
       </div>
 
-      <div className="mp-lang" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <div ref={langRef} className="mp-lang" style={{ display: "flex", alignItems: "center", gap: 6 }}>
         {/* Replay the first-load tour on demand — most useful right after switching
             language, so a French-speaking then English-speaking (or vice versa) visitor
             can see it in the language they actually want, not just once at first load. */}
@@ -1109,12 +1141,20 @@ const MetroMap = () => {
 
       {/* Line isolation: mirrors the disruption badge on the opposite corner, opens a panel
           on the opposite side, same reasoning throughout (toggle open/closed, quiet when
-          nothing's selected, a count instead of raw state when it isn't). */}
+          nothing's selected, a count instead of raw state when it isn't). bottom: 44, not
+          16 — MapLibre's own attribution control sits bottom-right by default (the same
+          corner the disruption badge avoided by living bottom-*left*), so this needs real
+          clearance above it or it just covers the required IDFM/OpenFreeMap credit, confirmed
+          the same way the badge-vs-attribution z-index bug was confirmed earlier: their real
+          rects genuinely overlapped (attribution top 1088 vs this button's bottom 1106 at a
+          1122px-tall viewport), not something z-index alone would have fixed since it doesn't
+          stop this button from visually sitting on top of and hiding the attribution text. */}
       <button
+        ref={linesBadgeRef}
         onClick={() => setLinesPanelOpen((o) => !o)}
         style={{
           position: "absolute",
-          bottom: 16,
+          bottom: 44,
           right: 16,
           zIndex: 5,
           display: "flex",
