@@ -3,5 +3,14 @@
   "private": true,
   "workspaces": [
     "apps/*"
-  ]
+  ],
+  "scripts": {
+    "prepare": "lefthook install"
+  },
+  "devDependencies": {
+    "lefthook": "^2.1.12"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
+  }
 }

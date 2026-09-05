@@ -7,7 +7,10 @@ WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY apps/server/package.json apps/server/package.json
 COPY apps/web/package.json apps/web/package.json
-RUN npm ci
+# --ignore-scripts: the root "prepare" script installs a git hook (lefthook) for local
+# dev — this build stage has no .git directory and no git binary, so running it here
+# would just fail the build for no benefit.
+RUN npm ci --ignore-scripts
 COPY apps/web apps/web
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_WS_URL

@@ -1,0 +1,10 @@
+# Runs before `git push` — see PRODUCT.md / conversation history for why: a broken build
+# should never reach the VPS deploy step. Both workspaces run in parallel since they're
+# independent (server build failing shouldn't block seeing whether web also fails).
+pre-push:
+  parallel: true
+  commands:
+    server-build:
+      run: npm run build --workspace=apps/server
+    web-build:
+      run: npm run build --workspace=apps/web
