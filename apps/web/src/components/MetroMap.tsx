@@ -16,7 +16,7 @@ const WS_URL = config.wsUrl;
  * correct) to bound it: an 8s timeout, one retry, then surface a real error instead of
  * spinning forever.
  */
-async function fetchNetworkWithRetry(): Promise<GeoJSON.FeatureCollection> {
+const fetchNetworkWithRetry = async (): Promise<GeoJSON.FeatureCollection> => {
   const attempt = async (): Promise<GeoJSON.FeatureCollection> => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
@@ -33,7 +33,7 @@ async function fetchNetworkWithRetry(): Promise<GeoJSON.FeatureCollection> {
   } catch {
     return await attempt();
   }
-}
+};
 
 interface SchedulePoint {
   fraction: number;
@@ -81,9 +81,9 @@ interface Disruption {
 
 /** No known window (empty periods) is treated as always-active — matches the server's own
  *  DisruptionState convention. */
-function isDisruptionActiveNow(d: Disruption, now: number): boolean {
+const isDisruptionActiveNow = (d: Disruption, now: number): boolean => {
   return d.periods.length === 0 || d.periods.some((p) => now >= p.begin && now <= p.end);
-}
+};
 
 const SEVERITY_RANK: Record<DisruptionSeverity, number> = { blocking: 2, reduced: 1, info: 0 };
 
@@ -155,7 +155,7 @@ const TOUR_STEPS: TourStepDef[] = [
  * moving by extrapolating forward at the rate implied by the last known segment, rather than
  * freezing — clamped so it never runs off the end of the actual track.
  */
-function fractionAt(schedule: SchedulePoint[], virtualNow: number): number {
+const fractionAt = (schedule: SchedulePoint[], virtualNow: number): number => {
   if (schedule.length === 0) return 0;
   if (virtualNow <= schedule[0].time) return schedule[0].fraction;
 
@@ -175,9 +175,9 @@ function fractionAt(schedule: SchedulePoint[], virtualNow: number): number {
   const rate = b.time > a.time ? (b.fraction - a.fraction) / (b.time - a.time) : 0;
   const extrapolated = b.fraction + rate * (virtualNow - b.time);
   return Math.max(0, Math.min(1, extrapolated));
-}
+};
 
-function vehiclesToGeoJSON(vehicles: TrackedVehicle[], lineGeometry: Map<string, Polyline>, now: number, speed: number): GeoJSON.FeatureCollection {
+const vehiclesToGeoJSON = (vehicles: TrackedVehicle[], lineGeometry: Map<string, Polyline>, now: number, speed: number): GeoJSON.FeatureCollection => {
   return {
     type: "FeatureCollection",
     features: vehicles
@@ -203,7 +203,7 @@ function vehiclesToGeoJSON(vehicles: TrackedVehicle[], lineGeometry: Map<string,
       })
       .filter((f): f is NonNullable<typeof f> => f !== null),
   };
-}
+};
 
 // Our own layers (added after this runs the first time) must never be touched by the
 // base-map restyle below — network-lines is type "line" and vehicles-label is type
@@ -214,7 +214,7 @@ const OWN_LAYER_IDS = new Set(["network-lines", "network-stations", "vehicles-gl
 /** Applies the resolved palette to the base map's own layers (background/land/water/roads/
  *  labels) — called once at load and again whenever the theme changes, so switching
  *  light/dark/auto re-styles the already-loaded map instead of needing a reload. */
-function applyMapTheme(map: MapLibreMap, t: ThemePalette) {
+const applyMapTheme = (map: MapLibreMap, t: ThemePalette) => {
   const style = map.getStyle();
   for (const layer of style.layers) {
     if (OWN_LAYER_IDS.has(layer.id)) continue;
@@ -238,9 +238,9 @@ function applyMapTheme(map: MapLibreMap, t: ThemePalette) {
   if (map.getLayer("network-stations")) {
     map.setPaintProperty("network-stations", "circle-stroke-color", t.ground);
   }
-}
+};
 
-export default function MetroMap() {
+const MetroMap = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const vehiclesRef = useRef<Map<string, TrackedVehicle>>(new Map());
@@ -296,19 +296,19 @@ export default function MetroMap() {
     (worst, d) => (worst === null || SEVERITY_RANK[d.severity] > SEVERITY_RANK[worst] ? d.severity : worst),
     null
   );
-  function groupDisruptionsByLine(list: Disruption[]): [string, Disruption[]][] {
+  const groupDisruptionsByLine = (list: Disruption[]): [string, Disruption[]][] => {
     const map = new Map<string, Disruption[]>();
     for (const d of list) map.set(d.lineId, [...(map.get(d.lineId) ?? []), d]);
     return [...map.entries()];
-  }
+  };
   const activeByLine = groupDisruptionsByLine(activeDisruptions);
   const upcomingByLine = groupDisruptionsByLine(upcomingDisruptions);
-  function severityColor(sev: DisruptionSeverity): string {
+  const severityColor = (sev: DisruptionSeverity): string => {
     return sev === "blocking" ? t.disruption : sev === "reduced" ? t.amberLamp : t.ink;
-  }
+  };
   /** Compact period label ("Today 10pm–11pm", "Sep 21–Oct 2") from the nearest upcoming
    *  window — enough to place it in time without repeating the prose already in the text. */
-  function formatPeriod(d: Disruption): string | null {
+  const formatPeriod = (d: Disruption): string | null => {
     const now = disruptionsNow;
     const period = d.periods.find((p) => now <= p.end) ?? d.periods[0];
     if (!period) return null;
@@ -319,7 +319,7 @@ export default function MetroMap() {
       return `${lang === "en" ? "Until" : "Jusqu'à"} ${endFmt.format(period.end)}`;
     }
     return fmt.format(period.begin);
-  }
+  };
 
   // Drives the curtain reveal once loading clears: waits a frame (so the closed state
   // paints first and the transform transition is guaranteed to fire), starts the parting
@@ -359,7 +359,7 @@ export default function MetroMap() {
       return;
     }
     const refKey = TOUR_STEPS[tourStep].ref;
-    function measure() {
+    const measure = () => {
       let el: HTMLElement | null = null;
       if (refKey === "speed") el = speedControlRef.current;
       else if (refKey === "themeLang") el = themeLangRef.current;
@@ -370,34 +370,34 @@ export default function MetroMap() {
       }
       const r = el.getBoundingClientRect();
       setTourRect({ top: r.top, left: r.left, width: r.width, height: r.height });
-    }
+    };
     measure();
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
   }, [tourStep]);
 
-  function endTour() {
+  const endTour = () => {
     setTourStep(null);
     try {
       localStorage.setItem(TOUR_SEEN_KEY, "1");
     } catch {
       // Storage blocked — the tour will just show again next visit, not worth failing over.
     }
-  }
+  };
 
-  function advanceTour() {
+  const advanceTour = () => {
     if (tourStep === null) return;
     if (tourStep >= TOUR_STEPS.length - 1) {
       endTour();
     } else {
       setTourStep(tourStep + 1);
     }
-  }
+  };
 
   // Re-anchors every tracked vehicle so a speed change never causes a visible jump: each
   // vehicle's current virtual position, evaluated under the *old* speed, becomes the new
   // anchor point that the *new* speed continues forward from.
-  function changeSpeed(next: number) {
+  const changeSpeed = (next: number) => {
     const now = Date.now();
     for (const v of vehiclesRef.current.values()) {
       const virtualNow = v.virtualAnchorTime + (now - v.realAnchorTime) * speedRef.current;
@@ -406,23 +406,23 @@ export default function MetroMap() {
     }
     speedRef.current = next;
     setSpeed(next);
-  }
+  };
 
   // Applies + forces a redraw immediately, called directly at the point of interaction
   // (button click, or the OS-preference listener below) rather than left to a reactive
   // effect — setPaintProperty alone doesn't reliably force a repaint when nothing else is
   // already invalidating the frame, so this must run synchronously with the state change,
   // not on a subsequent render pass.
-  function restyleMapNow(nextIsDark: boolean) {
+  const restyleMapNow = (nextIsDark: boolean) => {
     if (!mapRef.current) return;
     applyMapTheme(mapRef.current, nextIsDark ? themes.dark : themes.light);
     mapRef.current.triggerRepaint();
-  }
+  };
 
-  function changeThemeMode(mode: ThemeMode) {
+  const changeThemeMode = (mode: ThemeMode) => {
     setThemeMode(mode);
     restyleMapNow(mode === "auto" ? systemPrefersDark : mode === "dark");
-  }
+  };
 
   // Track system color-scheme preference for "auto" mode, live — no reload needed if the
   // viewer's OS theme changes while the tab is open.
@@ -615,7 +615,7 @@ export default function MetroMap() {
     const MAX_RECONNECT_DELAY_MS = 30_000;
     let cancelled = false;
 
-    function connectWebSocket() {
+    const connectWebSocket = () => {
       ws = new WebSocket(WS_URL);
       ws.onopen = () => {
         setConnected(true);
@@ -641,7 +641,7 @@ export default function MetroMap() {
           setDisruptions(msg.data);
         }
       };
-    }
+    };
     connectWebSocket();
 
     return () => {
@@ -1277,4 +1277,6 @@ export default function MetroMap() {
         })()}
     </div>
   );
-}
+};
+
+export default MetroMap;

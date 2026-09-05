@@ -2,26 +2,26 @@ export type LngLat = [number, number];
 
 const EARTH_RADIUS_M = 6371000;
 
-function toRad(deg: number): number {
+const toRad = (deg: number): number => {
   return (deg * Math.PI) / 180;
-}
+};
 
-function haversineMeters(a: LngLat, b: LngLat): number {
+const haversineMeters = (a: LngLat, b: LngLat): number => {
   const [lon1, lat1] = a;
   const [lon2, lat2] = b;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
   const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(s));
-}
+};
 
-function bearingDegrees(a: LngLat, b: LngLat): number {
+const bearingDegrees = (a: LngLat, b: LngLat): number => {
   const [lon1, lat1] = a.map(toRad) as LngLat;
   const [lon2, lat2] = b.map(toRad) as LngLat;
   const y = Math.sin(lon2 - lon1) * Math.cos(lat2);
   const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1);
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
-}
+};
 
 /**
  * Client-side mirror of apps/server/src/geometry.ts's Polyline (pointAtFraction only —

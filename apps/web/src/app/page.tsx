@@ -1,6 +1,6 @@
 import MetroMap from "@/components/MetroMap";
 
-export default function Home() {
+const Home = () => {
   return (
     // 100dvh, not 100vh: iOS Safari calculates 100vh against the largest possible
     // viewport (as if its toolbar were fully collapsed), not what's actually visible on
@@ -10,4 +10,6 @@ export default function Home() {
       <MetroMap />
     </main>
   );
-}
+};
+
+export default Home;

@@ -34,11 +34,11 @@ const LIVE_LINE_IDS = new Set(Object.keys(LINE_REGISTRY));
 // directly over the other. Purely a rendering convention (same idea official transit maps
 // use for shared corridors); doesn't touch real geometry or position data.
 const OFFSET_STEPS = [0, -2.5, 2.5, -5, 5, -1.25, 1.25, -3.75, 3.75, -6.25, 6.25];
-function offsetForIndex(i: number): number {
+const offsetForIndex = (i: number): number => {
   return OFFSET_STEPS[i % OFFSET_STEPS.length];
-}
+};
 
-function loadLine(id: string, index: number): LineDefinition {
+const loadLine = (id: string, index: number): LineDefinition => {
   const info = LINE_REGISTRY[id];
   const raw = JSON.parse(readFileSync(path.join(DATA_DIR, `${id}.geojson`), "utf-8")) as GeoJSON.FeatureCollection;
   const offset = offsetForIndex(index);
@@ -86,7 +86,7 @@ function loadLine(id: string, index: number): LineDefinition {
     branches,
     featureCollection: raw,
   };
-}
+};
 
 /**
  * Real geometry and stop sequences from IDFM's own GTFS static bundle
@@ -111,12 +111,12 @@ export const LIVE_LINES: LineDefinition[] = ALL_LINES.filter((l) => LIVE_LINE_ID
 export const LINE_BY_ID: Map<string, LineDefinition> = new Map(LIVE_LINES.map((l) => [l.id, l]));
 export const LINE_BY_REF: Map<string, LineDefinition> = new Map(LIVE_LINES.map((l) => [l.lineRef, l]));
 
-export function networkGeoJSON(): GeoJSON.FeatureCollection {
+export const networkGeoJSON = (): GeoJSON.FeatureCollection => {
   return {
     type: "FeatureCollection",
     features: ALL_LINES.flatMap((l) => l.featureCollection.features),
   };
-}
+};
 
 /**
  * Resolves a SIRI StopPointRef's bare quay code (e.g. "24859" from
@@ -127,6 +127,6 @@ const quayLocationRaw = JSON.parse(
   readFileSync(path.join(DATA_DIR, "quay-location.json"), "utf-8")
 ) as Record<string, { lat: number; lon: number; name: string }>;
 
-export function quayLocation(quayCode: string): { lat: number; lon: number; name: string } | undefined {
+export const quayLocation = (quayCode: string): { lat: number; lon: number; name: string } | undefined => {
   return quayLocationRaw[quayCode];
-}
+};

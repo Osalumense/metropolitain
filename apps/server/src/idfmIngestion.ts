@@ -36,11 +36,11 @@ const positionBudget = new DailyBudget();
 const disruptionBudget = new DailyBudget();
 
 /** "STIF:StopPointRef:Q:24859:" (or similar) -> "24859" */
-function extractQuayCode(stopPointRef: string): string | null {
+const extractQuayCode = (stopPointRef: string): string | null => {
   const parts = stopPointRef.split(":").filter(Boolean);
   const last = parts[parts.length - 1];
   return /^\d+$/.test(last) ? last : null;
-}
+};
 
 /**
  * The precise quay-level reference. For rail/RER calls it lives in the stop assignment
@@ -48,22 +48,22 @@ function extractQuayCode(stopPointRef: string): string | null {
  * StopPointRef there is a coarser StopArea, not the quay, and resolves to nothing in our
  * quay cross-reference. For simpler modes (bus) StopPointRef is already the quay ref.
  */
-function callQuayRef(call: EstimatedCall): string | null {
+const callQuayRef = (call: EstimatedCall): string | null => {
   return (
     call.ArrivalStopAssignment?.ExpectedQuayRef?.value ??
     call.DepartureStopAssignment?.ExpectedQuayRef?.value ??
     call.StopPointRef?.value ??
     null
   );
-}
+};
 
-function callTime(call: EstimatedCall, which: "arrival" | "departure"): number | null {
+const callTime = (call: EstimatedCall, which: "arrival" | "departure"): number | null => {
   const t =
     which === "arrival"
       ? call.ExpectedArrivalTime ?? call.AimedArrivalTime
       : call.ExpectedDepartureTime ?? call.AimedDepartureTime;
   return t ? Date.parse(t) : null;
-}
+};
 
 /**
  * Turns one journey's ordered stop-time predictions into a schedule of (fraction, time)
@@ -77,7 +77,7 @@ function callTime(call: EstimatedCall, which: "arrival" | "departure"): number |
  * (summed distance across every resolved call, lowest wins), rather than assuming one.
  * A journey on the wrong branch would otherwise interpolate onto a track it never runs on.
  */
-function scheduleFromCalls(line: LineDefinition, calls: EstimatedCall[]): { schedule: SchedulePoint[]; branchId: string } | null {
+const scheduleFromCalls = (line: LineDefinition, calls: EstimatedCall[]): { schedule: SchedulePoint[]; branchId: string } | null => {
   const resolved: ResolvedCall[] = [];
   for (const c of calls) {
     const quayRef = callQuayRef(c);
@@ -112,9 +112,9 @@ function scheduleFromCalls(line: LineDefinition, calls: EstimatedCall[]): { sche
     .sort((a, b) => a.time - b.time);
 
   return { schedule: points, branchId: bestBranch.branchId };
-}
+};
 
-export async function fetchVehicles(): Promise<VehicleState[]> {
+export const fetchVehicles = async (): Promise<VehicleState[]> => {
   if (!positionBudget.tryConsume(config.maxPositionCallsPerDay)) {
     console.warn("[idfm] daily position call budget exhausted, skipping this cycle");
     return [];
@@ -180,7 +180,7 @@ export async function fetchVehicles(): Promise<VehicleState[]> {
   }
 
   return vehicles;
-}
+};
 
 /**
  * "line:IDFM:C01728" -> "C01728" -> our LineDefinition, by matching against the same bare
@@ -195,7 +195,7 @@ const LINE_BY_BARE_CODE: Map<string, LineDefinition> = new Map(
 const HTML_ENTITY_MAP: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
 /** The feed's `message` is HTML ("<p>…</p><br>…") — strip tags/entities for plain display text. */
-function stripHtml(html: string): string {
+const stripHtml = (html: string): string => {
   return html
     .replace(/<[^>]+>/g, " ")
     .replace(/&(#(\d+)|[a-z]+);/gi, (_, _whole, dec) =>
@@ -203,15 +203,15 @@ function stripHtml(html: string): string {
     )
     .replace(/\s+/g, " ")
     .trim();
-}
+};
 
 /** IDFM's own three values (BLOQUANTE/PERTURBEE/INFORMATION), confirmed against the real
  *  feed — anything unrecognized falls back to "info" rather than overstating severity. */
-function normalizeSeverity(raw: string | undefined): DisruptionSeverity {
+const normalizeSeverity = (raw: string | undefined): DisruptionSeverity => {
   if (raw === "BLOQUANTE") return "blocking";
   if (raw === "PERTURBEE") return "reduced";
   return "info";
-}
+};
 
 /**
  * "20260924T044500" is Europe/Paris wall-clock time (confirmed against real departure
@@ -220,7 +220,7 @@ function normalizeSeverity(raw: string | undefined): DisruptionSeverity {
  * offset (which shifts with DST — CET vs CEST) puts it, rather than assuming a fixed
  * offset that would silently be wrong for half the year.
  */
-function parseParisDateTime(s: string): number | null {
+const parseParisDateTime = (s: string): number | null => {
   const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/.exec(s);
   if (!m) return null;
   const [, y, mo, d, h, mi, se] = m.map(Number);
@@ -248,9 +248,9 @@ function parseParisDateTime(s: string): number | null {
     Number(parisParts.second)
   );
   return guessAsUtc - (parisReadingAsUtc - guessAsUtc);
-}
+};
 
-export async function fetchDisruptions(): Promise<DisruptionState[]> {
+export const fetchDisruptions = async (): Promise<DisruptionState[]> => {
   if (!disruptionBudget.tryConsume(config.maxDisruptionCallsPerDay)) {
     console.warn("[idfm] daily disruption call budget exhausted, skipping this cycle");
     return [];
@@ -306,4 +306,4 @@ export async function fetchDisruptions(): Promise<DisruptionState[]> {
     }
   }
   return disruptions;
-}
+};

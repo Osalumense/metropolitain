@@ -11,7 +11,7 @@ const cache = new Map<string, string>();
  * set (local/dev default) or if the DeepL call fails — a disruption must
  * never disappear from the UI just because its translation isn't ready.
  */
-export async function translateToEnglish(frenchText: string): Promise<string> {
+export const translateToEnglish = async (frenchText: string): Promise<string> => {
   const cached = cache.get(frenchText);
   if (cached) return cached;
 
@@ -39,4 +39,4 @@ export async function translateToEnglish(frenchText: string): Promise<string> {
     console.error("[translate] DeepL call failed, falling back to French:", err);
     return frenchText;
   }
-}
+};

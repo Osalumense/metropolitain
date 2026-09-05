@@ -4,7 +4,7 @@ Conventions this project actually follows, derived from the existing code — no
 
 ## Code style
 
-- Named functions use `function name() {}` declarations, not `const name = () => {}` — true everywhere in both `apps/server` and `apps/web`, no exceptions. Arrow functions are for short inline callbacks only (`.map()`, event handlers, `requestAnimationFrame`), not for anything you'd give its own name and doc comment.
+- Named functions use `const name = (...) => {...};` — true everywhere in both `apps/server` and `apps/web`, no exceptions, including default-exported React components (`const Component = () => {...}; export default Component;`, never an anonymous `export default () => {}`, which would lose the name in stack traces and React DevTools). Migrated from `function name() {}` deliberately — see git history for the full rationale and the file-by-file conversion.
 - Double-quoted strings, semicolons everywhere. Nothing enforces this yet (no ESLint/Prettier config exists in this repo at all) — match what's already there by eye until that changes.
 - "Not found / couldn't parse" return values: use `null` when a function is deliberately signaling "I tried and there's no result" (e.g. `parseParisDateTime`, `extractQuayCode`). Use `undefined` when the absence is inherited from a native TS/JS mechanism — optional properties (`field?: string`), `Map.get()`, plain object indexing. Don't invent a third convention.
 - Comments explain WHY, not what — a hidden constraint, a bug being worked around, a non-obvious invariant (see almost any function in `idfmIngestion.ts` for the standard this is held to). Never restate what the code already says. Don't write multi-paragraph doc comments as a matter of course — most functions need one sentence, if that.

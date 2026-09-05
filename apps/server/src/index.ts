@@ -41,12 +41,12 @@ const wss = new WebSocketServer({
 let latestVehicles: VehicleState[] = [];
 let latestDisruptions: DisruptionState[] = [];
 
-function broadcast(payload: unknown) {
+const broadcast = (payload: unknown) => {
   const message = JSON.stringify(payload);
   for (const client of wss.clients) {
     if (client.readyState === WebSocket.OPEN) client.send(message);
   }
-}
+};
 
 wss.on("connection", (socket) => {
   console.log(`[ws] client connected (${wss.clients.size} total)`);
@@ -55,23 +55,23 @@ wss.on("connection", (socket) => {
   socket.on("close", () => console.log(`[ws] client disconnected (${wss.clients.size} total)`));
 });
 
-async function positionLoop() {
+const positionLoop = async () => {
   try {
     latestVehicles = await fetchVehicles();
     broadcast({ type: "positions", data: latestVehicles });
   } catch (err) {
     console.error("[positionLoop] failed:", err);
   }
-}
+};
 
-async function disruptionLoop() {
+const disruptionLoop = async () => {
   try {
     latestDisruptions = await fetchDisruptions();
     broadcast({ type: "disruptions", data: latestDisruptions });
   } catch (err) {
     console.error("[disruptionLoop] failed:", err);
   }
-}
+};
 
 setInterval(positionLoop, config.positionIntervalMs);
 setInterval(disruptionLoop, config.disruptionIntervalMs);

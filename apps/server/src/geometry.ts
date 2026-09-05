@@ -2,11 +2,11 @@ export type LngLat = [number, number];
 
 const EARTH_RADIUS_M = 6371000;
 
-function toRad(deg: number): number {
+const toRad = (deg: number): number => {
   return (deg * Math.PI) / 180;
-}
+};
 
-export function haversineMeters(a: LngLat, b: LngLat): number {
+export const haversineMeters = (a: LngLat, b: LngLat): number => {
   const [lon1, lat1] = a;
   const [lon2, lat2] = b;
   const dLat = toRad(lat2 - lat1);
@@ -15,9 +15,9 @@ export function haversineMeters(a: LngLat, b: LngLat): number {
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(s));
-}
+};
 
-export function bearingDegrees(a: LngLat, b: LngLat): number {
+export const bearingDegrees = (a: LngLat, b: LngLat): number => {
   const [lon1, lat1] = a.map(toRad) as LngLat;
   const [lon2, lat2] = b.map(toRad) as LngLat;
   const y = Math.sin(lon2 - lon1) * Math.cos(lat2);
@@ -26,7 +26,7 @@ export function bearingDegrees(a: LngLat, b: LngLat): number {
     Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1);
   const deg = (Math.atan2(y, x) * 180) / Math.PI;
   return (deg + 360) % 360;
-}
+};
 
 /** A polyline with precomputed cumulative distance at each vertex, for fast position-at-fraction lookups. */
 export class Polyline {
@@ -104,7 +104,7 @@ export class Polyline {
  * every ingestion cycle. A 5m tolerance is imperceptible on the rendered map but cuts
  * vertex count (and served payload size) by roughly 3x.
  */
-export function simplifyPolyline(coords: LngLat[], toleranceMeters: number): LngLat[] {
+export const simplifyPolyline = (coords: LngLat[], toleranceMeters: number): LngLat[] => {
   if (coords.length <= 2) return coords;
 
   // Local equirectangular projection (meters) — accurate enough at Paris's scale, and only
@@ -114,7 +114,7 @@ export function simplifyPolyline(coords: LngLat[], toleranceMeters: number): Lng
   const mPerDegLon = 111320 * Math.cos(toRad(meanLat));
   const xy: [number, number][] = coords.map(([lon, lat]) => [lon * mPerDegLon, lat * mPerDegLat]);
 
-  function perpendicularDistance(p: [number, number], a: [number, number], b: [number, number]): number {
+  const perpendicularDistance = (p: [number, number], a: [number, number], b: [number, number]): number => {
     const dx = b[0] - a[0];
     const dy = b[1] - a[1];
     const lenSq = dx * dx + dy * dy;
@@ -123,9 +123,9 @@ export function simplifyPolyline(coords: LngLat[], toleranceMeters: number): Lng
     const px = a[0] + t * dx;
     const py = a[1] + t * dy;
     return Math.hypot(p[0] - px, p[1] - py);
-  }
+  };
 
-  function rdp(lo: number, hi: number): LngLat[] {
+  const rdp = (lo: number, hi: number): LngLat[] => {
     let maxDist = -1;
     let splitIdx = lo;
     for (let i = lo + 1; i < hi; i++) {
@@ -141,7 +141,7 @@ export function simplifyPolyline(coords: LngLat[], toleranceMeters: number): Lng
       return left.slice(0, -1).concat(right);
     }
     return [coords[lo], coords[hi]];
-  }
+  };
 
   return rdp(0, coords.length - 1);
-}
+};

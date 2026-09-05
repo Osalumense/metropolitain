@@ -7,11 +7,11 @@ import "dotenv/config";
  * an obscure runtime error wherever it happened to first get used.
  */
 
-function required(name: string): string {
+const required = (name: string): string => {
   const value = process.env[name];
   if (!value) throw new Error(`${name} not set`);
   return value;
-}
+};
 
 // Fixed IDFM/DeepL endpoints — not deployment-specific (never meaningfully overridden
 // per-environment), but still centralized here rather than hardcoded inline wherever a
