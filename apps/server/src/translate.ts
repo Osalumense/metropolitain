@@ -67,13 +67,27 @@ const attemptTranslation = async (frenchText: string, apiKey: string): Promise<{
   return { ok: true, text: data.translations[0]?.text ?? frenchText };
 };
 
+/** MyMemory's anonymous free tier needs no API key — used only once DeepL itself has
+ *  already failed, so a bad/quota-warning response here just means "still no translation,"
+ *  not a hard error. */
+const attemptMyMemoryTranslation = async (frenchText: string): Promise<string | null> => {
+  const url = `${config.myMemoryUrl}?q=${encodeURIComponent(frenchText)}&langpair=fr|en`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = (await res.json()) as { responseStatus: number; quotaFinished?: boolean; responseData?: { translatedText?: string } };
+  const text = data.responseData?.translatedText;
+  if (data.responseStatus !== 200 || data.quotaFinished || !text) return null;
+  return text;
+};
+
 /**
  * Translates French disruption text to English, once per distinct message.
  * Cached on disk (see PRODUCT.md: cost scales with distinct messages/day, not
  * polls or visitors) so a redeploy doesn't force re-translating everything again.
  *
- * Falls back to returning the French text unchanged when no DEEPL_API_KEY is
- * set (local/dev default) or if the DeepL call still fails after a retry — a
+ * Falls back to MyMemory's free keyless API when DeepL fails (rate-limited or
+ * quota-exhausted after a retry), and to the French text unchanged when no
+ * DEEPL_API_KEY is set (local/dev default) or MyMemory has nothing either — a
  * disruption must never disappear from the UI just because its translation
  * isn't ready. A failed/fallback result is deliberately never cached, so the
  * next poll cycle (not just the next restart) gets another real attempt.
@@ -98,12 +112,24 @@ export const translateToEnglish = async (frenchText: string): Promise<string> =>
       await waitForCallSlot();
       result = await attemptTranslation(frenchText, apiKey);
     }
-    if (!result.ok) throw new Error("DeepL 429 (retried once, still rate-limited)");
+    if (!result.ok) throw new Error("DeepL rate-limited or quota exhausted after retry");
     cache.set(frenchText, result.text);
     persistCache();
     return result.text;
   } catch (err) {
-    console.error("[translate] DeepL call failed, falling back to French:", err);
-    return frenchText;
+    console.error("[translate] DeepL unavailable, trying MyMemory fallback:", err);
   }
+
+  try {
+    const fallback = await attemptMyMemoryTranslation(frenchText);
+    if (fallback) {
+      cache.set(frenchText, fallback);
+      persistCache();
+      return fallback;
+    }
+  } catch (err) {
+    console.error("[translate] MyMemory fallback also failed:", err);
+  }
+
+  return frenchText;
 };

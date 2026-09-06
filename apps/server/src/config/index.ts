@@ -34,6 +34,10 @@ export const config = {
   primBaseUrl: PRIM_BASE_URL,
   disruptionsBulkUrl: `${PRIM_BASE_URL}/disruptions_bulk/disruptions/v2`,
   deeplUrl: "https://api-free.deepl.com/v2/translate",
+  // Free, keyless fallback for when DeepL is rate-limited or its monthly quota is
+  // exhausted — lower translation quality, but no account/billing to set up, and it's
+  // only ever reached when DeepL has already failed.
+  myMemoryUrl: "https://api.mymemory.translated.net/get",
   // Mounted as a named Docker volume (see docker-compose.yml) so the translation cache
   // survives a redeploy — without this, every "docker compose build && up -d" recreates
   // the container from scratch, wiping an in-memory-only cache and forcing every disruption
