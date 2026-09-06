@@ -5,7 +5,8 @@
     "apps/*"
   ],
   "scripts": {
-    "prepare": "lefthook install"
+    "prepare": "lefthook install",
+    "test": "npm run test --workspaces"
   },
   "devDependencies": {
     "lefthook": "^2.1.12"

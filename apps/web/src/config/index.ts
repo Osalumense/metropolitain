@@ -17,7 +17,7 @@ export const config = {
   // The token isn't a secret: Cloudflare's beacon script is designed to sit in public
   // page source, the same as a Google Analytics measurement ID.
   cloudflareBeaconUrl: "https://static.cloudflareinsights.com/beacon.min.js",
-  cloudflareBeaconToken: "7dae5c543bab44e483581398efb24c70",
+  cloudflareBeaconToken: process.env.NEXT_PUBLIC_CF_BEACON_TOKEN ?? "7dae5c543bab44e483581398efb24c70",
 
   // How long to wait for our own backend's /api/network before retrying once, then
   // surfacing a real error — see fetchNetworkWithRetry in MetroMap.tsx.

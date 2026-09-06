@@ -14,8 +14,10 @@ RUN npm ci --ignore-scripts
 COPY apps/web apps/web
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_WS_URL
+ARG NEXT_PUBLIC_CF_BEACON_TOKEN
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
+ENV NEXT_PUBLIC_CF_BEACON_TOKEN=$NEXT_PUBLIC_CF_BEACON_TOKEN
 RUN npm run build --workspace=apps/web
 
 # Next's standalone output mirrors the monorepo path (apps/web/server.js), plus a

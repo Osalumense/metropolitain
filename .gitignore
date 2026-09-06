@@ -8,3 +8,5 @@ env/*.env
 *.tsbuildinfo
 .claude/
 deploy.env
+cache/
+apps/server/cache/

@@ -36,6 +36,7 @@ services:
       args:
         NEXT_PUBLIC_API_URL: https://api.metropolitain.live
         NEXT_PUBLIC_WS_URL: wss://api.metropolitain.live/ws
+        NEXT_PUBLIC_CF_BEACON_TOKEN: 7dae5c543bab44e483581398efb24c70
     restart: unless-stopped
     ports:
       - "127.0.0.1:4000:3000"
