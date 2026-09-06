@@ -10,6 +10,10 @@ services:
       - ./env/server.env
     ports:
       - "127.0.0.1:4001:4001"
+    # Named volume so translate.ts's on-disk cache (config.translateCachePath) survives
+    # "docker compose build && up -d" — only "down -v" or an explicit volume rm clears it.
+    volumes:
+      - translate-cache:/app/cache
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 20s
@@ -42,3 +46,6 @@ services:
       retries: 10
       start_period: 15s
     logging: *logging
+
+volumes:
+  translate-cache:

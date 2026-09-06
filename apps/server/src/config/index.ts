@@ -34,6 +34,12 @@ export const config = {
   primBaseUrl: PRIM_BASE_URL,
   disruptionsBulkUrl: `${PRIM_BASE_URL}/disruptions_bulk/disruptions/v2`,
   deeplUrl: "https://api-free.deepl.com/v2/translate",
+  // Mounted as a named Docker volume (see docker-compose.yml) so the translation cache
+  // survives a redeploy — without this, every "docker compose build && up -d" recreates
+  // the container from scratch, wiping an in-memory-only cache and forcing every disruption
+  // to be re-translated at once, which is what actually burned a full month's DeepL quota
+  // in one day of shipping fixes.
+  translateCachePath: process.env.TRANSLATE_CACHE_PATH ?? "/app/cache/translate-cache.json",
 
   // Hard safety ceilings on real IDFM calls per day, independent of the polling-interval
   // math above — a defensive backstop against a reconnect storm or a stuck retry loop
