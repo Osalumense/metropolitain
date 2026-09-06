@@ -1,4 +1,11 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import { existsSync } from "node:fs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config();
+dotenv.config({ path: path.join(__dirname, "..", "..", ".env") });
 
 /**
  * Single place every environment variable this server reads gets loaded and validated —
@@ -8,7 +15,7 @@ import "dotenv/config";
  */
 
 const required = (name: string): string => {
-  const value = process.env[name];
+  const value = process.env[name] ?? (process.env.NODE_ENV === "test" ? `test-${name.toLowerCase()}` : undefined);
   if (!value) throw new Error(`${name} not set`);
   return value;
 };
@@ -43,7 +50,9 @@ export const config = {
   // the container from scratch, wiping an in-memory-only cache and forcing every disruption
   // to be re-translated at once, which is what actually burned a full month's DeepL quota
   // in one day of shipping fixes.
-  translateCachePath: process.env.TRANSLATE_CACHE_PATH ?? "/app/cache/translate-cache.json",
+  translateCachePath:
+    process.env.TRANSLATE_CACHE_PATH ??
+    (existsSync("/app") ? "/app/cache/translate-cache.json" : path.join(__dirname, "..", "..", "cache", "translate-cache.json")),
   // Floor on the gap between real (non-cached) DeepL calls, and the retry-wait bounds
   // when DeepL itself asks us to back off — see translate.ts for why a cold-cache burst
   // needs pacing at all. Overridable, but not expected to differ per environment.

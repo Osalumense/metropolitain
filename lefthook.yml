@@ -8,3 +8,5 @@ pre-push:
       run: npm run build --workspace=apps/server
     web-build:
       run: npm run build --workspace=apps/web
+    tests:
+      run: npm test

@@ -36,7 +36,7 @@ const positionBudget = new DailyBudget();
 const disruptionBudget = new DailyBudget();
 
 /** "STIF:StopPointRef:Q:24859:" (or similar) -> "24859" */
-const extractQuayCode = (stopPointRef: string): string | null => {
+export const extractQuayCode = (stopPointRef: string): string | null => {
   const parts = stopPointRef.split(":").filter(Boolean);
   const last = parts[parts.length - 1];
   return /^\d+$/.test(last) ? last : null;
@@ -195,7 +195,7 @@ const LINE_BY_BARE_CODE: Map<string, LineDefinition> = new Map(
 const HTML_ENTITY_MAP: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
 /** The feed's `message` is HTML ("<p>…</p><br>…") — strip tags/entities for plain display text. */
-const stripHtml = (html: string): string => {
+export const stripHtml = (html: string): string => {
   return html
     .replace(/<[^>]+>/g, " ")
     .replace(/&(#(\d+)|[a-z]+);/gi, (_, _whole, dec) =>
@@ -207,7 +207,7 @@ const stripHtml = (html: string): string => {
 
 /** IDFM's own three values (BLOQUANTE/PERTURBEE/INFORMATION), confirmed against the real
  *  feed — anything unrecognized falls back to "info" rather than overstating severity. */
-const normalizeSeverity = (raw: string | undefined): DisruptionSeverity => {
+export const normalizeSeverity = (raw: string | undefined): DisruptionSeverity => {
   if (raw === "BLOQUANTE") return "blocking";
   if (raw === "PERTURBEE") return "reduced";
   return "info";
@@ -220,7 +220,7 @@ const normalizeSeverity = (raw: string | undefined): DisruptionSeverity => {
  * offset (which shifts with DST — CET vs CEST) puts it, rather than assuming a fixed
  * offset that would silently be wrong for half the year.
  */
-const parseParisDateTime = (s: string): number | null => {
+export const parseParisDateTime = (s: string): number | null => {
   const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/.exec(s);
   if (!m) return null;
   const [, y, mo, d, h, mi, se] = m.map(Number);

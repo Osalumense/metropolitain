@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFile, rename, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { config } from "./config/index.js";
 
@@ -15,16 +16,66 @@ const loadCache = (): Map<string, string> => {
 
 const cache = loadCache();
 
-// Fire-and-forget: a disk write must never slow down or fail a translation response, and
-// losing the very latest entry on an ungraceful shutdown just means one extra DeepL call
-// on the next boot — cheap, unlike a full cold-cache burst across every distinct message.
-const persistCache = () => {
+// Fire-and-forget: debounced async disk write keeps translation responses and the Node
+// event loop fast during bursts of new disruptions. Uses atomic rename so a partial write
+// or abrupt restart never corrupts the existing cache file.
+let persistTimer: NodeJS.Timeout | null = null;
+let isWriting = false;
+let pendingWriteAgain = false;
+
+const flushCacheToDisk = async (): Promise<void> => {
+  if (isWriting) {
+    pendingWriteAgain = true;
+    return;
+  }
+  isWriting = true;
+  pendingWriteAgain = false;
+  try {
+    const dir = path.dirname(config.translateCachePath);
+    await mkdir(dir, { recursive: true });
+    const tmpPath = `${config.translateCachePath}.${Date.now()}.tmp`;
+    const payload = JSON.stringify(Object.fromEntries(cache));
+    await writeFile(tmpPath, payload, "utf-8");
+    await rename(tmpPath, config.translateCachePath);
+  } catch (err) {
+    console.error("[translate] failed to persist cache asynchronously:", err);
+  } finally {
+    isWriting = false;
+    if (pendingWriteAgain) {
+      void flushCacheToDisk();
+    }
+  }
+};
+
+const flushSyncOnExit = () => {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
   try {
     mkdirSync(path.dirname(config.translateCachePath), { recursive: true });
     writeFileSync(config.translateCachePath, JSON.stringify(Object.fromEntries(cache)));
-  } catch (err) {
-    console.error("[translate] failed to persist cache:", err);
+  } catch {
+    // Best-effort flush on shutdown
   }
+};
+
+process.on("beforeExit", flushSyncOnExit);
+process.on("SIGINT", () => {
+  flushSyncOnExit();
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  flushSyncOnExit();
+  process.exit(0);
+});
+
+const persistCache = () => {
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    void flushCacheToDisk();
+  }, 500);
 };
 
 // Even with the cache persisted to disk (see loadCache/persistCache above), a first-ever
