@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Script from "next/script";
+import { config } from "@/config";
 
 export const metadata: Metadata = {
   title: "Métropolitain — live",
@@ -20,8 +21,8 @@ const RootLayout = ({ children }: { children: React.ReactNode }) => {
         {/* Cloudflare Web Analytics — cookieless, no consent banner needed. */}
         <Script
           type="module"
-          src="https://static.cloudflareinsights.com/beacon.min.js"
-          data-cf-beacon='{"token": "7dae5c543bab44e483581398efb24c70"}'
+          src={config.cloudflareBeaconUrl}
+          data-cf-beacon={`{"token": "${config.cloudflareBeaconToken}"}`}
           strategy="afterInteractive"
         />
       </body>

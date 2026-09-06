@@ -36,11 +36,10 @@ const persistCache = () => {
 // the gap between real (non-cached) calls keeps a burst from ever bunching up in the first
 // place — cheap insurance, since it only adds delay when a call is actually about to hit
 // the network, never to a cache hit.
-const MIN_CALL_INTERVAL_MS = 120;
 let lastCallAt = 0;
 
 const waitForCallSlot = async () => {
-  const waitMs = MIN_CALL_INTERVAL_MS - (Date.now() - lastCallAt);
+  const waitMs = config.translateMinCallIntervalMs - (Date.now() - lastCallAt);
   if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
   lastCallAt = Date.now();
 };
@@ -103,7 +102,7 @@ export const translateToEnglish = async (frenchText: string): Promise<string> =>
       await waitForCallSlot();
       let result = await attemptTranslation(frenchText, apiKey);
       if (!result.ok) {
-        const waitMs = Math.min(result.retryAfterMs ?? 1500, 5000);
+        const waitMs = Math.min(result.retryAfterMs ?? config.translateRetryDefaultMs, config.translateRetryMaxMs);
         await new Promise((resolve) => setTimeout(resolve, waitMs));
         await waitForCallSlot();
         result = await attemptTranslation(frenchText, apiKey);

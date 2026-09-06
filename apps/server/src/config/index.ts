@@ -44,6 +44,12 @@ export const config = {
   // to be re-translated at once, which is what actually burned a full month's DeepL quota
   // in one day of shipping fixes.
   translateCachePath: process.env.TRANSLATE_CACHE_PATH ?? "/app/cache/translate-cache.json",
+  // Floor on the gap between real (non-cached) DeepL calls, and the retry-wait bounds
+  // when DeepL itself asks us to back off — see translate.ts for why a cold-cache burst
+  // needs pacing at all. Overridable, but not expected to differ per environment.
+  translateMinCallIntervalMs: Number(process.env.TRANSLATE_MIN_CALL_INTERVAL_MS ?? 120),
+  translateRetryDefaultMs: Number(process.env.TRANSLATE_RETRY_DEFAULT_MS ?? 1500),
+  translateRetryMaxMs: Number(process.env.TRANSLATE_RETRY_MAX_MS ?? 5000),
 
   // Hard safety ceilings on real IDFM calls per day, independent of the polling-interval
   // math above — a defensive backstop against a reconnect storm or a stuck retry loop

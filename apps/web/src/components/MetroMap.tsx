@@ -19,7 +19,7 @@ const WS_URL = config.wsUrl;
 const fetchNetworkWithRetry = async (): Promise<GeoJSON.FeatureCollection> => {
   const attempt = async (): Promise<GeoJSON.FeatureCollection> => {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timeout = setTimeout(() => controller.abort(), config.networkFetchTimeoutMs);
     try {
       const res = await fetch(`${API_URL}/api/network`, { signal: controller.signal });
       if (!res.ok) throw new Error(`/api/network responded ${res.status}`);
@@ -577,7 +577,7 @@ const MetroMap = () => {
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: "https://tiles.openfreemap.org/styles/liberty",
+      style: config.mapStyleUrl,
       center: [2.3417, 48.8639], // central Paris
       zoom: 12.3,
       // Required tile attribution plus IDFM's own — both licenses (Etalab Open License for
@@ -761,21 +761,20 @@ const MetroMap = () => {
     // for the actual audience here (people on phones) was the most likely failure mode.
     let ws: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let reconnectDelayMs = 1000;
-    const MAX_RECONNECT_DELAY_MS = 30_000;
+    let reconnectDelayMs = config.wsReconnectInitialDelayMs;
     let cancelled = false;
 
     const connectWebSocket = () => {
       ws = new WebSocket(WS_URL);
       ws.onopen = () => {
         setConnected(true);
-        reconnectDelayMs = 1000; // back to the fast retry once a connection actually succeeds
+        reconnectDelayMs = config.wsReconnectInitialDelayMs; // back to the fast retry once a connection actually succeeds
       };
       ws.onclose = () => {
         setConnected(false);
         if (cancelled) return;
         reconnectTimer = setTimeout(connectWebSocket, reconnectDelayMs);
-        reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
+        reconnectDelayMs = Math.min(reconnectDelayMs * 2, config.wsReconnectMaxDelayMs);
       };
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
