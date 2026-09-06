@@ -85,39 +85,36 @@ const attemptMyMemoryTranslation = async (frenchText: string): Promise<string | 
  * Cached on disk (see PRODUCT.md: cost scales with distinct messages/day, not
  * polls or visitors) so a redeploy doesn't force re-translating everything again.
  *
- * Falls back to MyMemory's free keyless API when DeepL fails (rate-limited or
- * quota-exhausted after a retry), and to the French text unchanged when no
- * DEEPL_API_KEY is set (local/dev default) or MyMemory has nothing either — a
- * disruption must never disappear from the UI just because its translation
- * isn't ready. A failed/fallback result is deliberately never cached, so the
- * next poll cycle (not just the next restart) gets another real attempt.
+ * Falls back to MyMemory's free keyless API whenever DeepL isn't usable — no
+ * DEEPL_API_KEY set at all, or a configured DeepL call still failing (rate-limited
+ * or quota-exhausted) after one retry — and to the French text unchanged if
+ * MyMemory has nothing either. A disruption must never disappear from the UI
+ * just because its translation isn't ready. A failed/fallback result is
+ * deliberately never cached, so the next poll cycle (not just the next
+ * restart) gets another real attempt.
  */
 export const translateToEnglish = async (frenchText: string): Promise<string> => {
   const cached = cache.get(frenchText);
   if (cached) return cached;
 
   const apiKey = config.deeplApiKey;
-  if (!apiKey) {
-    cache.set(frenchText, frenchText);
-    persistCache();
-    return frenchText;
-  }
-
-  try {
-    await waitForCallSlot();
-    let result = await attemptTranslation(frenchText, apiKey);
-    if (!result.ok) {
-      const waitMs = Math.min(result.retryAfterMs ?? 1500, 5000);
-      await new Promise((resolve) => setTimeout(resolve, waitMs));
+  if (apiKey) {
+    try {
       await waitForCallSlot();
-      result = await attemptTranslation(frenchText, apiKey);
+      let result = await attemptTranslation(frenchText, apiKey);
+      if (!result.ok) {
+        const waitMs = Math.min(result.retryAfterMs ?? 1500, 5000);
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        await waitForCallSlot();
+        result = await attemptTranslation(frenchText, apiKey);
+      }
+      if (!result.ok) throw new Error("DeepL rate-limited or quota exhausted after retry");
+      cache.set(frenchText, result.text);
+      persistCache();
+      return result.text;
+    } catch (err) {
+      console.error("[translate] DeepL unavailable, trying MyMemory fallback:", err);
     }
-    if (!result.ok) throw new Error("DeepL rate-limited or quota exhausted after retry");
-    cache.set(frenchText, result.text);
-    persistCache();
-    return result.text;
-  } catch (err) {
-    console.error("[translate] DeepL unavailable, trying MyMemory fallback:", err);
   }
 
   try {

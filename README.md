@@ -4,6 +4,8 @@ A real-time map of Paris's Métro, RER, Transilien, and Tram network — every t
 
 Live at [metropolitain.live](https://metropolitain.live).
 
+![Métropolitain demo: vehicles moving live on the map, then isolating RER A via the line panel](docs/demo.gif)
+
 ## What it does
 
 - Tracks live vehicle positions across all 44 rail/tram lines (16 Métro, 5 RER, 8 Transilien, 15 Tram), rendered as smoothly moving markers on a MapLibre GL map.
@@ -23,7 +25,7 @@ apps/
 │   │   ├── idfmIngestion.ts   Real-time position + disruption fetching from IDFM
 │   │   ├── network.ts    Loads line/station geometry, builds lookup tables
 │   │   ├── geometry.ts   Polyline math (position-at-fraction, nearest-point, simplify)
-│   │   ├── translate.ts  French→English translation via DeepL, cached
+│   │   ├── translate.ts  French→English translation via DeepL (falls back to MyMemory), disk-cached
 │   │   └── index.ts      HTTP + WebSocket server, polling loops
 │   └── data/*.geojson    Real line/branch geometry, extracted from IDFM's GTFS bundle
 └── web/      Next.js frontend
@@ -32,14 +34,14 @@ apps/
         └── components/MetroMap.tsx   The whole map UI
 ```
 
-No database — everything is in-memory and rebuilt fresh from IDFM on restart.
+No database — vehicle and disruption state is in-memory and rebuilt fresh from IDFM on restart. The one exception is the translation cache (French disruption text → English), which is written to a small JSON file on a named Docker volume so a redeploy doesn't force re-translating every distinct message from scratch.
 
 ## Getting started
 
 **Prerequisites:**
 - Node.js 20+
 - A free [PRIM API key](https://prim.iledefrance-mobilites.fr) (IDFM's open data platform) — required, there is no mock/offline mode
-- A free [DeepL API key](https://www.deepl.com/pro-api) — optional; without it, disruption text is French-only
+- A free [DeepL API key](https://www.deepl.com/pro-api) — optional; without it, translation falls back to [MyMemory](https://mymemory.translated.net)'s free keyless API, and to French-only if that's unavailable too
 
 ```bash
 git clone <this-repo>
