@@ -178,34 +178,40 @@ const vehiclesToGeoJSON = (
 const OWN_LAYER_IDS = new Set(["network-lines", "network-stations", "vehicles-glow", "vehicles-badge", "vehicles-label"]);
 
 const applyMapTheme = (map: MapLibreMap, t: ThemePalette) => {
-  if (!map.isStyleLoaded()) return;
   const style = map.getStyle();
   if (!style || !style.layers) return;
   for (const layer of style.layers) {
     if (OWN_LAYER_IDS.has(layer.id)) continue;
-    if (layer.type === "background") {
-      map.setPaintProperty(layer.id, "background-color", t.ground);
-    } else if (layer.type === "fill" && !layer.id.includes("water")) {
-      map.setPaintProperty(layer.id, "fill-color", t.ground);
-      map.setPaintProperty(layer.id, "fill-opacity", 0.6);
-    } else if (layer.type === "fill" && layer.id.includes("water")) {
-      map.setPaintProperty(layer.id, "fill-color", t.verdigris);
-      map.setPaintProperty(layer.id, "fill-opacity", 0.25);
-    } else if (layer.type === "line") {
-      map.setPaintProperty(layer.id, "line-color", t.bronze);
-      map.setPaintProperty(layer.id, "line-opacity", 0.35);
-    } else if (layer.type === "symbol") {
-      if (
-        layer.id.includes("shield") ||
-        layer.id.includes("poi") ||
-        layer.id.includes("road_one_way")
-      ) {
-        map.setLayoutProperty(layer.id, "visibility", "none");
-        continue;
+    try {
+      if (layer.type === "background") {
+        map.setPaintProperty(layer.id, "background-color", t.ground);
+      } else if (layer.type === "fill" && !layer.id.includes("water")) {
+        map.setPaintProperty(layer.id, "fill-color", t.ground);
+        map.setPaintProperty(layer.id, "fill-opacity", 0.6);
+      } else if (layer.type === "fill" && layer.id.includes("water")) {
+        map.setPaintProperty(layer.id, "fill-color", t.verdigris);
+        map.setPaintProperty(layer.id, "fill-opacity", 0.25);
+      } else if (layer.type === "line") {
+        map.setPaintProperty(layer.id, "line-color", t.bronze);
+        map.setPaintProperty(layer.id, "line-opacity", 0.35);
+      } else if (layer.type === "fill-extrusion") {
+        map.setPaintProperty(layer.id, "fill-extrusion-color", t.ground);
+        map.setPaintProperty(layer.id, "fill-extrusion-opacity", 0.6);
+      } else if (layer.type === "symbol") {
+        if (
+          layer.id.includes("shield") ||
+          layer.id.includes("poi") ||
+          layer.id.includes("road_one_way")
+        ) {
+          map.setLayoutProperty(layer.id, "visibility", "none");
+          continue;
+        }
+        map.setPaintProperty(layer.id, "text-color", t.ink);
+        map.setPaintProperty(layer.id, "text-halo-color", t.ground);
+        map.setPaintProperty(layer.id, "text-opacity", 0.4);
       }
-      map.setPaintProperty(layer.id, "text-color", t.ink);
-      map.setPaintProperty(layer.id, "text-halo-color", t.ground);
-      map.setPaintProperty(layer.id, "text-opacity", 0.4);
+    } catch {
+      // Best-effort property updates per layer
     }
   }
   try {
@@ -395,7 +401,7 @@ const MetroMap = () => {
 
   const restyleMapNow = (nextIsDark: boolean) => {
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map || !map.getStyle()?.layers) return;
     applyMapTheme(map, nextIsDark ? themes.dark : themes.light);
     map.triggerRepaint();
   };
@@ -419,7 +425,7 @@ const MetroMap = () => {
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map || !map.getStyle()?.layers) return;
     try {
       if (!map.getLayer("network-lines")) return;
     } catch {
@@ -481,8 +487,14 @@ const MetroMap = () => {
     });
     mapRef.current = map;
 
+    map.on("load", () => {
+      applyMapTheme(map, t);
+      map.triggerRepaint();
+    });
+
     map.on("style.load", async () => {
       applyMapTheme(map, t);
+      map.triggerRepaint();
 
       let network: GeoJSON.FeatureCollection;
       try {
@@ -667,7 +679,7 @@ const MetroMap = () => {
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }}>
-      <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+      <div ref={containerRef} style={{ width: "100%", height: "100%", backgroundColor: t.ground }} />
 
       <CurtainOverlay
         mounted={overlayMounted}
