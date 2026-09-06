@@ -88,6 +88,8 @@ const persistCache = () => {
 // place — cheap insurance, since it only adds delay when a call is actually about to hit
 // the network, never to a cache hit.
 let lastCallAt = 0;
+let deeplDisabledUntil = 0;
+let myMemoryDisabledUntil = 0;
 
 const waitForCallSlot = async () => {
   const waitMs = config.translateMinCallIntervalMs - (Date.now() - lastCallAt);
@@ -95,87 +97,131 @@ const waitForCallSlot = async () => {
   lastCallAt = Date.now();
 };
 
-/** One retry after a short pause, respecting DeepL's own Retry-After header when it sends
- *  one, is usually enough on top of the pacing above — the limit is short-lived, not a
- *  hard quota block. */
-const attemptTranslation = async (frenchText: string, apiKey: string): Promise<{ ok: true; text: string } | { ok: false; retryAfterMs: number | null }> => {
-  const res = await fetch(config.deeplUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `DeepL-Auth-Key ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ text: [frenchText], source_lang: "FR", target_lang: "EN" }),
-  });
-  if (res.status === 429) {
-    const retryAfterHeader = res.headers.get("retry-after");
-    const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : null;
-    return { ok: false, retryAfterMs };
+/**
+ * Attempts DeepL translation with a hard timeout and error classification.
+ * Distinguishes permanent failures (quota 456, invalid auth 403) from transient 429s.
+ */
+const attemptTranslation = async (
+  frenchText: string,
+  apiKey: string
+): Promise<{ ok: true; text: string } | { ok: false; retryAfterMs: number | null; permanent: boolean }> => {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch(config.deeplUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `DeepL-Auth-Key ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ text: [frenchText], source_lang: "FR", target_lang: "EN" }),
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
+
+    if (res.status === 456 || res.status === 403) {
+      return { ok: false, retryAfterMs: null, permanent: true };
+    }
+    if (res.status === 429) {
+      const retryAfterHeader = res.headers.get("retry-after");
+      const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : null;
+      return { ok: false, retryAfterMs, permanent: false };
+    }
+    if (!res.ok) {
+      return { ok: false, retryAfterMs: null, permanent: false };
+    }
+    const data = (await res.json()) as { translations?: { text: string }[] };
+    return { ok: true, text: data.translations?.[0]?.text ?? frenchText };
+  } catch {
+    return { ok: false, retryAfterMs: null, permanent: false };
   }
-  if (!res.ok) throw new Error(`DeepL ${res.status}`);
-  const data = (await res.json()) as { translations: { text: string }[] };
-  return { ok: true, text: data.translations[0]?.text ?? frenchText };
 };
 
-/** MyMemory's anonymous free tier needs no API key — used only once DeepL itself has
- *  already failed, so a bad/quota-warning response here just means "still no translation,"
- *  not a hard error. */
+/**
+ * MyMemory free tier translation with hard timeout and circuit breaker on quota exhaustion.
+ */
 const attemptMyMemoryTranslation = async (frenchText: string): Promise<string | null> => {
-  const url = `${config.myMemoryUrl}?q=${encodeURIComponent(frenchText)}&langpair=fr|en`;
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  const data = (await res.json()) as { responseStatus: number; quotaFinished?: boolean; responseData?: { translatedText?: string } };
-  const text = data.responseData?.translatedText;
-  if (data.responseStatus !== 200 || data.quotaFinished || !text) return null;
-  return text;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const url = `${config.myMemoryUrl}?q=${encodeURIComponent(frenchText)}&langpair=fr|en`;
+    const res = await fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timeout));
+    if (!res.ok) {
+      myMemoryDisabledUntil = Date.now() + 15 * 60 * 1000;
+      return null;
+    }
+    const data = (await res.json()) as {
+      responseStatus: number;
+      quotaFinished?: boolean;
+      responseData?: { translatedText?: string };
+    };
+    if (data.responseStatus !== 200 || data.quotaFinished) {
+      myMemoryDisabledUntil = Date.now() + 30 * 60 * 1000;
+      return null;
+    }
+    const text = data.responseData?.translatedText;
+    return text ?? null;
+  } catch {
+    myMemoryDisabledUntil = Date.now() + 15 * 60 * 1000;
+    return null;
+  }
 };
 
 /**
  * Translates French disruption text to English, once per distinct message.
- * Cached on disk (see PRODUCT.md: cost scales with distinct messages/day, not
- * polls or visitors) so a redeploy doesn't force re-translating everything again.
+ * Cached on disk so a redeploy doesn't force re-translating everything again.
  *
- * Falls back to MyMemory's free keyless API whenever DeepL isn't usable — no
- * DEEPL_API_KEY set at all, or a configured DeepL call still failing (rate-limited
- * or quota-exhausted) after one retry — and to the French text unchanged if
- * MyMemory has nothing either. A disruption must never disappear from the UI
- * just because its translation isn't ready. A failed/fallback result is
- * deliberately never cached, so the next poll cycle (not just the next
- * restart) gets another real attempt.
+ * Employs circuit breakers for both DeepL and MyMemory: if DeepL quota is exhausted
+ * (HTTP 456) or key is invalid, DeepL is paused for 1 hour so the ingestion pipeline
+ * never gets trapped in thousands of milliseconds of failing retries. If MyMemory
+ * quota is hit or unavailable, it pauses for 30 minutes. When providers are disabled,
+ * this function immediately and safely returns the original French text in 0ms.
  */
 export const translateToEnglish = async (frenchText: string): Promise<string> => {
+  if (!frenchText) return "";
   const cached = cache.get(frenchText);
   if (cached) return cached;
 
+  const now = Date.now();
   const apiKey = config.deeplApiKey;
-  if (apiKey) {
+
+  if (apiKey && now >= deeplDisabledUntil) {
     try {
       await waitForCallSlot();
       let result = await attemptTranslation(frenchText, apiKey);
-      if (!result.ok) {
+      if (!result.ok && !result.permanent) {
         const waitMs = Math.min(result.retryAfterMs ?? config.translateRetryDefaultMs, config.translateRetryMaxMs);
         await new Promise((resolve) => setTimeout(resolve, waitMs));
         await waitForCallSlot();
         result = await attemptTranslation(frenchText, apiKey);
       }
-      if (!result.ok) throw new Error("DeepL rate-limited or quota exhausted after retry");
-      cache.set(frenchText, result.text);
-      persistCache();
-      return result.text;
+      if (result.ok) {
+        cache.set(frenchText, result.text);
+        persistCache();
+        return result.text;
+      } else if (result.permanent) {
+        deeplDisabledUntil = Date.now() + 60 * 60 * 1000;
+        console.warn("[translate] DeepL quota exhausted or key invalid; pausing DeepL for 1 hour");
+      } else {
+        deeplDisabledUntil = Date.now() + 5 * 60 * 1000;
+        console.warn("[translate] DeepL rate-limited after retry; pausing DeepL for 5 minutes");
+      }
     } catch (err) {
-      console.error("[translate] DeepL unavailable, trying MyMemory fallback:", err);
+      deeplDisabledUntil = Date.now() + 5 * 60 * 1000;
+      console.error("[translate] DeepL call error, pausing for 5 minutes:", err);
     }
   }
 
-  try {
-    const fallback = await attemptMyMemoryTranslation(frenchText);
-    if (fallback) {
-      cache.set(frenchText, fallback);
-      persistCache();
-      return fallback;
+  if (now >= myMemoryDisabledUntil) {
+    try {
+      const fallback = await attemptMyMemoryTranslation(frenchText);
+      if (fallback) {
+        cache.set(frenchText, fallback);
+        persistCache();
+        return fallback;
+      }
+    } catch {
+      myMemoryDisabledUntil = Date.now() + 15 * 60 * 1000;
     }
-  } catch (err) {
-    console.error("[translate] MyMemory fallback also failed:", err);
   }
 
   return frenchText;

@@ -64,11 +64,13 @@ const loadLine = (id: string, index: number): LineDefinition => {
     branches.push({ branchId, polyline: new Polyline(simplified) });
   }
 
-  // Stamp the registry's color/short_name/isLive/offset/mode onto every feature (every
+  // Stamp the registry's id/lineId/color/short_name/isLive/offset/mode onto every feature (every
   // branch line + every station) so the client never needs its own copy of the registry.
   for (const feature of raw.features) {
     feature.properties = {
       ...feature.properties,
+      id: info.id,
+      lineId: info.id,
       color: info.color,
       text_color: info.textColor,
       short_name: info.shortName,

@@ -267,32 +267,59 @@ export const fetchDisruptions = async (): Promise<DisruptionState[]> => {
   const json = await res.json();
   const items: BulkDisruption[] = json?.disruptions ?? [];
 
-  const disruptions: DisruptionState[] = [];
+  // 1. Pre-filter only disruptions impacting lines we actually track (rail, RER, tramway),
+  // discarding bus-only disruptions (~80% of bulk feed) BEFORE touching translation.
+  const relevantItems: { item: BulkDisruption; lines: LineDefinition[]; textFr: string; shortTextFr: string }[] = [];
+  const textsToTranslate = new Set<string>();
+
   for (const item of items) {
     const sections = item.impactedSections ?? [];
-    // A single disruption can list the same line several times (one per affected direction
-    // /segment) — dedupe before turning it into per-line entries.
     const lineIds = new Set(sections.map((s) => s.lineId).filter((x): x is string => !!x));
-    if (lineIds.size === 0) continue; // no attributable line (e.g. bus-only, or network-wide)
+    if (lineIds.size === 0) continue;
+
+    const matchingLines: LineDefinition[] = [];
+    for (const rawLineId of lineIds) {
+      const code = rawLineId.replace(/^line:IDFM:/, "");
+      const line = LINE_BY_BARE_CODE.get(code);
+      if (line) matchingLines.push(line);
+    }
+    if (matchingLines.length === 0) continue; // bus-only or network-wide untracked service
 
     const textFr = stripHtml(item.message ?? item.title ?? item.shortMessage ?? "");
     if (!textFr) continue;
-    const textEn = await translateToEnglish(textFr);
-    // shortMessage is already concise ("Stop not served") — only fall back to stripping
-    // the full message if it's somehow missing, never re-derive from the (line-name-
-    // prefixed) title, since that would repeat the line name the UI already shows as the
-    // group header.
     const shortTextFr = item.shortMessage ? stripHtml(item.shortMessage) : textFr;
-    const shortTextEn = item.shortMessage ? await translateToEnglish(shortTextFr) : textEn;
+
+    textsToTranslate.add(textFr);
+    if (shortTextFr !== textFr) {
+      textsToTranslate.add(shortTextFr);
+    }
+
+    relevantItems.push({ item, lines: matchingLines, textFr, shortTextFr });
+  }
+
+  // 2. Translate unique texts with modest concurrency so rate limits and pacing are respected.
+  const translations = new Map<string, string>();
+  const textArray = [...textsToTranslate];
+  const BATCH_SIZE = 5;
+  for (let i = 0; i < textArray.length; i += BATCH_SIZE) {
+    const chunk = textArray.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(chunk.map(async (text) => [text, await translateToEnglish(text)] as const));
+    for (const [fr, en] of results) {
+      translations.set(fr, en);
+    }
+  }
+
+  // 3. Assemble DisruptionState entries for all tracked lines.
+  const disruptions: DisruptionState[] = [];
+  for (const { item, lines, textFr, shortTextFr } of relevantItems) {
+    const textEn = translations.get(textFr) ?? textFr;
+    const shortTextEn = translations.get(shortTextFr) ?? (shortTextFr === textFr ? textEn : shortTextFr);
     const severity: DisruptionSeverity = normalizeSeverity(item.severity);
     const periods = (item.applicationPeriods ?? [])
       .map((p) => ({ begin: p.begin ? parseParisDateTime(p.begin) : null, end: p.end ? parseParisDateTime(p.end) : null }))
       .filter((p): p is { begin: number; end: number } => p.begin !== null && p.end !== null);
 
-    for (const rawLineId of lineIds) {
-      const code = rawLineId.replace(/^line:IDFM:/, "");
-      const line = LINE_BY_BARE_CODE.get(code);
-      if (!line) continue; // a line we don't track (bus, etc.)
+    for (const line of lines) {
       disruptions.push({
         id: `${item.id}-${line.id}`,
         lineId: line.id,
@@ -305,5 +332,6 @@ export const fetchDisruptions = async (): Promise<DisruptionState[]> => {
       });
     }
   }
+
   return disruptions;
 };

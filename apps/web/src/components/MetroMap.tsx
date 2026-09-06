@@ -195,6 +195,14 @@ const applyMapTheme = (map: MapLibreMap, t: ThemePalette) => {
       map.setPaintProperty(layer.id, "line-color", t.bronze);
       map.setPaintProperty(layer.id, "line-opacity", 0.35);
     } else if (layer.type === "symbol") {
+      if (
+        layer.id.includes("shield") ||
+        layer.id.includes("poi") ||
+        layer.id.includes("road_one_way")
+      ) {
+        map.setLayoutProperty(layer.id, "visibility", "none");
+        continue;
+      }
       map.setPaintProperty(layer.id, "text-color", t.ink);
       map.setPaintProperty(layer.id, "text-halo-color", t.ground);
       map.setPaintProperty(layer.id, "text-opacity", 0.4);
@@ -230,6 +238,7 @@ const MetroMap = () => {
   const [disruptionsOpen, setDisruptionsOpen] = useState(false);
   const [upcomingOpen, setUpcomingOpen] = useState(false);
   const [selectedLines, setSelectedLines] = useState<Set<string>>(new Set());
+  const [lineMeta, setLineMeta] = useState<Map<string, LineMeta>>(new Map());
   const [linesPanelOpen, setLinesPanelOpen] = useState(false);
   const [expandedDisruptionId, setExpandedDisruptionId] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(DEFAULT_THEME_MODE);
@@ -277,7 +286,7 @@ const MetroMap = () => {
   const lineCollator = new Intl.Collator("en", { numeric: true });
   const linesByMode = MODE_ORDER.map((mode) => ({
     mode,
-    lines: [...lineMetaRef.current.entries()]
+    lines: [...lineMeta.entries()]
       .filter(([, meta]) => meta.mode === mode)
       .sort((a, b) => lineCollator.compare(a[1].shortName, b[1].shortName)),
   })).filter((group) => group.lines.length > 0);
@@ -422,13 +431,15 @@ const MetroMap = () => {
       map.setPaintProperty("network-stations", "circle-opacity", ["case", ["get", "isLive"], 0.85, 0.35]);
       map.setPaintProperty("vehicles-glow", "circle-opacity", ["match", ["get", "certainty"], "confirmed", 0.35, 0.15]);
       map.setPaintProperty("vehicles-badge", "circle-opacity", ["match", ["get", "certainty"], "confirmed", 1, 0.6]);
+      map.setPaintProperty("vehicles-badge", "circle-stroke-opacity", ["match", ["get", "certainty"], "confirmed", 1, 0.6]);
       map.setPaintProperty("vehicles-label", "text-opacity", ["match", ["get", "certainty"], "confirmed", 1, 0.75]);
       return;
     }
 
     const selected = ["literal", [...selectedLines]] as const;
-    map.setPaintProperty("network-lines", "line-opacity", ["case", ["in", ["get", "id"], selected], 0.9, 0.06]);
-    map.setPaintProperty("network-stations", "circle-opacity", ["case", ["in", ["get", "id"], selected], 0.9, 0.06]);
+    const lineMatch = ["in", ["coalesce", ["get", "id"], ["get", "lineId"]], selected];
+    map.setPaintProperty("network-lines", "line-opacity", ["case", lineMatch, 0.9, 0.06]);
+    map.setPaintProperty("network-stations", "circle-opacity", ["case", lineMatch, 0.9, 0.06]);
     map.setPaintProperty("vehicles-glow", "circle-opacity", [
       "case",
       ["in", ["get", "lineId"], selected],
@@ -436,6 +447,12 @@ const MetroMap = () => {
       0.03,
     ]);
     map.setPaintProperty("vehicles-badge", "circle-opacity", [
+      "case",
+      ["in", ["get", "lineId"], selected],
+      ["match", ["get", "certainty"], "confirmed", 1, 0.6],
+      0.06,
+    ]);
+    map.setPaintProperty("vehicles-badge", "circle-stroke-opacity", [
       "case",
       ["in", ["get", "lineId"], selected],
       ["match", ["get", "certainty"], "confirmed", 1, 0.6],
@@ -476,11 +493,13 @@ const MetroMap = () => {
       }
       map.addSource("network", { type: "geojson", data: network });
 
+      const meta = new Map<string, LineMeta>();
       for (const feature of network.features) {
         if (feature.geometry.type !== "LineString") continue;
         const props = feature.properties as {
           branchId?: string;
           id?: string;
+          lineId?: string;
           color?: string;
           text_color?: string;
           short_name?: string;
@@ -489,16 +508,19 @@ const MetroMap = () => {
         };
         if (!props.branchId) continue;
         lineGeometryRef.current.set(props.branchId, new Polyline(feature.geometry.coordinates as LngLat[]));
-        if (props.id && props.color && props.short_name && !lineMetaRef.current.has(props.id)) {
-          lineMetaRef.current.set(props.id, {
+        const lid = props.id ?? props.lineId;
+        if (lid && props.color && props.short_name && !meta.has(lid)) {
+          meta.set(lid, {
             color: props.color,
             textColor: props.text_color ?? "#000000",
             shortName: props.short_name,
             mode: props.mode ?? "metro",
           });
-          lineOffsetsRef.current.set(props.id, props.offset ?? 0);
+          lineOffsetsRef.current.set(lid, props.offset ?? 0);
         }
       }
+      lineMetaRef.current = meta;
+      setLineMeta(meta);
 
       map.addLayer({
         id: "network-lines",
@@ -618,7 +640,11 @@ const MetroMap = () => {
           const receivedAt = Date.now();
           const next = new Map<string, TrackedVehicle>();
           for (const v of msg.data as Vehicle[]) {
-            next.set(v.tripId, { ...v, virtualAnchorTime: v.schedule[0]?.time ?? receivedAt, realAnchorTime: receivedAt });
+            const existing = vehiclesRef.current.get(v.tripId);
+            const virtualAnchor = existing
+              ? existing.virtualAnchorTime + (receivedAt - existing.realAnchorTime) * speedRef.current
+              : receivedAt;
+            next.set(v.tripId, { ...v, virtualAnchorTime: virtualAnchor, realAnchorTime: receivedAt });
           }
           vehiclesRef.current = next;
           setLastUpdate(Date.now());
@@ -761,7 +787,7 @@ const MetroMap = () => {
         palette={t}
         panelBg={panelBg}
         panelBgSolid={panelBgSolid}
-        lineMeta={lineMetaRef.current}
+        lineMeta={lineMeta}
       />
 
       <LinePanel
