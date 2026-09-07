@@ -137,33 +137,104 @@ const attemptTranslation = async (
 };
 
 /**
- * MyMemory free tier translation with hard timeout and circuit breaker on quota exhaustion.
+ * Splits long disruption text into sentence or clause chunks <= maxLen (default 450 chars).
+ * Needed because MyMemory's free tier has a hard 500-character ceiling per query.
  */
-const attemptMyMemoryTranslation = async (frenchText: string): Promise<string | null> => {
+export const chunkText = (text: string, maxLen = 450): string[] => {
+  if (text.length <= maxLen) return [text];
+
+  const sentences = text.split(/(?<=[.!?;:\n])\s+/);
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const sentence of sentences) {
+    if (!sentence) continue;
+    if (sentence.length > maxLen) {
+      if (current) {
+        chunks.push(current.trim());
+        current = "";
+      }
+      const words = sentence.split(/\s+/);
+      let wordChunk = "";
+      for (const word of words) {
+        if ((wordChunk + " " + word).trim().length <= maxLen) {
+          wordChunk = (wordChunk + " " + word).trim();
+        } else {
+          if (wordChunk) chunks.push(wordChunk);
+          wordChunk = word;
+        }
+      }
+      if (wordChunk) chunks.push(wordChunk);
+      continue;
+    }
+
+    if ((current ? current + " " + sentence : sentence).length <= maxLen) {
+      current = current ? current + " " + sentence : sentence;
+    } else {
+      if (current) chunks.push(current.trim());
+      current = sentence;
+    }
+  }
+
+  if (current) chunks.push(current.trim());
+  return chunks.length > 0 ? chunks : [text];
+};
+
+/**
+ * Translates a single text chunk (<= 450 characters) via MyMemory's free tier.
+ * Only trips the 30-minute circuit breaker on true API exhaustion (quotaFinished or HTTP 429).
+ */
+const attemptMyMemorySingle = async (frenchText: string): Promise<string | null> => {
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
+    const timeout = setTimeout(() => controller.abort(), 4000);
     const url = `${config.myMemoryUrl}?q=${encodeURIComponent(frenchText)}&langpair=fr|en`;
     const res = await fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timeout));
     if (!res.ok) {
-      myMemoryDisabledUntil = Date.now() + 15 * 60 * 1000;
+      if (res.status === 429) {
+        myMemoryDisabledUntil = Date.now() + 30 * 60 * 1000;
+        console.warn("[translate] MyMemory rate-limited (HTTP 429); pausing for 30 minutes");
+      }
       return null;
     }
     const data = (await res.json()) as {
-      responseStatus: number;
-      quotaFinished?: boolean;
+      responseStatus: number | string;
+      quotaFinished?: boolean | null;
       responseData?: { translatedText?: string };
+      responseDetails?: string;
     };
-    if (data.responseStatus !== 200 || data.quotaFinished) {
+    if (data.quotaFinished || String(data.responseStatus) === "429") {
       myMemoryDisabledUntil = Date.now() + 30 * 60 * 1000;
+      console.warn("[translate] MyMemory quota exhausted or rate-limited; pausing for 30 minutes");
+      return null;
+    }
+    if (String(data.responseStatus) !== "200") {
+      // Single query rejected (e.g. formatting or length); do not pause globally
       return null;
     }
     const text = data.responseData?.translatedText;
     return text ?? null;
   } catch {
-    myMemoryDisabledUntil = Date.now() + 15 * 60 * 1000;
     return null;
   }
+};
+
+/**
+ * MyMemory free tier translation with sentence-level chunking and circuit breaker on quota exhaustion.
+ */
+const attemptMyMemoryTranslation = async (frenchText: string): Promise<string | null> => {
+  const chunks = chunkText(frenchText, 450);
+  if (chunks.length === 1) {
+    return attemptMyMemorySingle(chunks[0]);
+  }
+  const translatedChunks: string[] = [];
+  for (const chunk of chunks) {
+    if (Date.now() < myMemoryDisabledUntil) return null;
+    const res = await attemptMyMemorySingle(chunk);
+    if (!res) return null;
+    translatedChunks.push(res);
+  }
+  return translatedChunks.join(" ");
 };
 
 /**
