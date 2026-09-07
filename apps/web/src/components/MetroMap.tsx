@@ -21,6 +21,7 @@ import ThemeControl from "@/components/ThemeControl";
 import DisruptionPanel from "@/components/DisruptionPanel";
 import LinePanel from "@/components/LinePanel";
 import TourOverlay from "@/components/TourOverlay";
+import LegalModal from "@/components/LegalModal";
 
 const API_URL = config.apiUrl;
 const WS_URL = config.wsUrl;
@@ -249,6 +250,7 @@ const MetroMap = () => {
   const [expandedDisruptionId, setExpandedDisruptionId] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(DEFAULT_THEME_MODE);
   const [systemPrefersDark, setSystemPrefersDark] = useState(true);
+  const [legalOpen, setLegalOpen] = useState(false);
 
   const [tourStep, setTourStep] = useState<number | null>(null);
   const [tourRect, setTourRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
@@ -695,11 +697,13 @@ const MetroMap = () => {
         .mp-speed { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 5; }
         .mp-theme { position: absolute; top: 16px; right: 93px; z-index: 5; }
         .mp-lang { position: absolute; top: 16px; right: 16px; z-index: 5; }
+        .mp-legal-link { position: absolute; bottom: 18px; right: 38px; z-index: 4; }
         @media (max-width: 640px) {
           .mp-wordmark { top: 12px; left: 12px; }
           .mp-lang { top: 12px; right: 12px; }
           .mp-speed { top: 58px; left: 50%; right: auto; transform: translateX(-50%); }
           .mp-theme { top: 102px; left: 50%; right: auto; transform: translateX(-50%); }
+          .mp-legal-link { bottom: 18px; right: 32px; font-size: 9px; }
         }
       `}</style>
 
@@ -827,6 +831,40 @@ const MetroMap = () => {
         panelBgSolid={panelBgSolid}
         onAdvance={advanceTour}
         onEnd={endTour}
+      />
+
+      <button
+        onClick={() => setLegalOpen(true)}
+        className="mp-legal-link"
+        style={{
+          background: "none",
+          border: "none",
+          color: t.ink,
+          opacity: 0.55,
+          fontSize: 10,
+          fontFamily: "system-ui, sans-serif",
+          cursor: "pointer",
+          padding: "2px 4px",
+          textDecoration: "underline",
+          textUnderlineOffset: 2,
+          transition: "opacity 0.2s ease",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.opacity = "0.95";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.opacity = "0.55";
+        }}
+      >
+        {lang === "en" ? "Legal Notice & Credits" : "Mentions Légales & Crédits"}
+      </button>
+
+      <LegalModal
+        open={legalOpen}
+        onClose={() => setLegalOpen(false)}
+        lang={lang}
+        palette={t}
+        panelBgSolid={panelBgSolid}
       />
     </div>
   );
