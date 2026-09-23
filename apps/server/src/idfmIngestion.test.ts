@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   extractQuayCode,
+  longestMonotonicRun,
   normalizeSeverity,
   parseParisDateTime,
   stripHtml,
@@ -50,4 +51,39 @@ test("parseParisDateTime correctly accounts for Paris CET/CEST daylight saving t
   // Malformed timestamp returns null
   assert.strictEqual(parseParisDateTime("invalid-date"), null);
   assert.strictEqual(parseParisDateTime("2026-07-15T14:30:00"), null);
+});
+
+test("longestMonotonicRun leaves an already-consistent schedule untouched", () => {
+  const decreasing = [0.9, 0.7, 0.5, 0.3, 0.1].map((fraction, i) => ({ fraction, time: i }));
+  assert.deepStrictEqual(longestMonotonicRun(decreasing), decreasing);
+
+  const increasing = [0.1, 0.3, 0.5, 0.7, 0.9].map((fraction, i) => ({ fraction, time: i }));
+  assert.deepStrictEqual(longestMonotonicRun(increasing), increasing);
+});
+
+test("longestMonotonicRun drops stale interleaved points from a delayed/last-of-night journey", () => {
+  // Reproduces a real case found live on 2026-09-23: a delayed last Métro 8 run whose
+  // call list mixed stale predicted times for already-passed stops (fraction 0.94/0.91,
+  // both individually close to the real track) in among fresh, correctly time-ordered
+  // ones — every stale point breaks the otherwise-clean decreasing run.
+  const withStaleInterleaved = [0.85, 0.94, 0.79, 0.91, 0.77, 0.74, 0.72].map((fraction, i) => ({ fraction, time: i }));
+  const result = longestMonotonicRun(withStaleInterleaved);
+  assert.deepStrictEqual(
+    result.map((p) => p.fraction),
+    [0.85, 0.79, 0.77, 0.74, 0.72],
+  );
+});
+
+test("longestMonotonicRun picks whichever direction fits more points, and leaves short schedules alone", () => {
+  // Mostly-increasing with one point that only fits a decreasing reading — the increasing
+  // run is longer, so it wins.
+  const mostlyIncreasing = [0.1, 0.9, 0.3, 0.5, 0.7].map((fraction, i) => ({ fraction, time: i }));
+  assert.deepStrictEqual(
+    longestMonotonicRun(mostlyIncreasing).map((p) => p.fraction),
+    [0.1, 0.3, 0.5, 0.7],
+  );
+
+  // Fewer than 3 points can't meaningfully establish a direction — returned as-is.
+  const tooShort = [{ fraction: 0.9, time: 0 }, { fraction: 0.1, time: 1 }];
+  assert.deepStrictEqual(longestMonotonicRun(tooShort), tooShort);
 });

@@ -72,4 +72,14 @@ export const config = {
   // rest of the day, every day. Confirmed directly against IDFM's real feed.
   maxPositionCallsPerDay: Number(process.env.MAX_POSITION_CALLS_PER_DAY ?? 1400),
   maxDisruptionCallsPerDay: Number(process.env.MAX_DISRUPTION_CALLS_PER_DAY ?? 700),
+
+  // A resolved call's quay coordinate should land within a few hundred meters of its
+  // line's own branch geometry — confirmed against live IDFM data on 2026-09-23: correctly
+  // matched stops sit within ~1-600m (simplifyPolyline tolerance + quay-vs-centerline
+  // offset), while a stop whose real track isn't covered by any loaded branch (missing
+  // branch variant, most often on a forking RER/Transilien line) still gets a "nearest"
+  // match, just a wrong one 2-16km away. 750m sits well clear of both clusters. See
+  // scheduleFromCalls for why an uncovered stop must be dropped, not kept with a bad
+  // fraction — a bad fraction moves the vehicle marker backward on screen.
+  maxCallDistanceMeters: Number(process.env.MAX_CALL_DISTANCE_METERS ?? 750),
 };

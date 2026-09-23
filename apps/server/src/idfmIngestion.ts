@@ -66,6 +66,44 @@ const callTime = (call: EstimatedCall, which: "arrival" | "departure"): number |
 };
 
 /**
+ * Keeps only the longest run (in time order) that's consistently monotonic in one
+ * direction along the branch, trying both directions and keeping whichever fits more
+ * points — a delayed or last-of-night journey can carry stale predicted times for stops
+ * it's already passed alongside fresh ones for stops still ahead (confirmed live: a
+ * delayed last Métro 8 run whose call list interleaved already-passed western stations'
+ * old times with the current eastern ones). Each stale point still resolves close to the
+ * real track — config.maxCallDistanceMeters alone can't catch it — but it breaks the one
+ * property a real, single train's schedule always has: fraction moves the same direction
+ * throughout. O(n²), fine at this scale (a handful to a few dozen calls per journey).
+ */
+export const longestMonotonicRun = (points: SchedulePoint[]): SchedulePoint[] => {
+  if (points.length < 3) return points;
+
+  const longestRun = (nonDecreasing: boolean): SchedulePoint[] => {
+    const bestLength = new Array<number>(points.length).fill(1);
+    const predecessor = new Array<number>(points.length).fill(-1);
+    for (let i = 1; i < points.length; i++) {
+      for (let j = 0; j < i; j++) {
+        const fits = nonDecreasing ? points[j].fraction <= points[i].fraction : points[j].fraction >= points[i].fraction;
+        if (fits && bestLength[j] + 1 > bestLength[i]) {
+          bestLength[i] = bestLength[j] + 1;
+          predecessor[i] = j;
+        }
+      }
+    }
+    let end = 0;
+    for (let i = 1; i < points.length; i++) if (bestLength[i] > bestLength[end]) end = i;
+    const run: SchedulePoint[] = [];
+    for (let i = end; i !== -1; i = predecessor[i]) run.unshift(points[i]);
+    return run;
+  };
+
+  const increasing = longestRun(true);
+  const decreasing = longestRun(false);
+  return increasing.length >= decreasing.length ? increasing : decreasing;
+};
+
+/**
  * Turns one journey's ordered stop-time predictions into a schedule of (fraction, time)
  * points the client can evaluate continuously — resolving each call to real coordinates
  * via the quay cross-reference. No raw GPS exists in this feed at all, so this real
@@ -79,9 +117,21 @@ const callTime = (call: EstimatedCall, which: "arrival" | "departure"): number |
  */
 const scheduleFromCalls = (line: LineDefinition, calls: EstimatedCall[]): { schedule: SchedulePoint[]; branchId: string } | null => {
   const resolved: ResolvedCall[] = [];
+  // IDFM intermittently repeats the same physical stop twice in one journey's call list
+  // (confirmed live 2026-09-23: two entries for the same quay, each with a slightly
+  // different predicted time) — each copy is individually plausible, but sorting the
+  // combined list by time interleaves them, which reads on screen as the vehicle darting
+  // forward and back between two near-simultaneous predictions for the same stop. A real
+  // journey only visits a given quay once, so only the first (freshest, per SIRI's own
+  // update-in-place convention) occurrence is trustworthy.
+  const seenQuays = new Set<string>();
   for (const c of calls) {
     const quayRef = callQuayRef(c);
     const quay = quayRef ? extractQuayCode(quayRef) : null;
+    if (quay) {
+      if (seenQuays.has(quay)) continue;
+      seenQuays.add(quay);
+    }
     const loc = quay ? quayLocation(quay) : undefined;
     if (!loc) continue;
     const time = callTime(c, "arrival") ?? callTime(c, "departure");
@@ -107,11 +157,20 @@ const scheduleFromCalls = (line: LineDefinition, calls: EstimatedCall[]): { sche
     }
   }
 
-  const points: SchedulePoint[] = resolved
-    .map((r, i) => ({ fraction: bestResults[i].fraction, time: r.time }))
+  // A call whose real quay sits nowhere near the winning branch's own geometry isn't a
+  // fork/offset rounding error — it means this stop's track isn't covered by any branch
+  // we loaded for this line (confirmed on RER D: a real branch variant through
+  // Brunoy/Yerres missing from the registry). "Nearest point" still returns *a* fraction
+  // in that case, just a wrong, far-away one, which would otherwise make the vehicle
+  // marker jump backward on screen before the next real point corrects it. Dropping the
+  // call is strictly better than keeping a wrong position — see config.maxCallDistanceMeters.
+  const distanceFiltered: SchedulePoint[] = resolved
+    .map((r, i) => ({ fraction: bestResults[i].fraction, time: r.time, distanceMeters: bestResults[i].distanceMeters }))
+    .filter((p) => p.distanceMeters <= config.maxCallDistanceMeters)
+    .map(({ fraction, time }) => ({ fraction, time }))
     .sort((a, b) => a.time - b.time);
 
-  return { schedule: points, branchId: bestBranch.branchId };
+  return { schedule: longestMonotonicRun(distanceFiltered), branchId: bestBranch.branchId };
 };
 
 export const fetchVehicles = async (): Promise<VehicleState[]> => {
